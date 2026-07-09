@@ -34,6 +34,35 @@ function build_contingency_table(item_a::AbstractString, item_b::AbstractString,
 end
 
 """
+    odds_ratio(ct::AbstractMatrix{<:Integer}; correction::Symbol=:haldane) -> Float64
+
+Odds ratio (a·d)/(b·c) of a 2×2 contingency table `[a b; c d]`.
+
+With `correction=:haldane` (default), the Haldane–Anscombe correction adds 0.5 to
+*all four* cells whenever any cell is zero, so a zero in `b` or `c` yields a large
+but finite OR instead of `Inf`/`NaN` — keeping downstream sorting and plotting
+total. `correction=:none` returns the raw ratio, which may be `Inf` (empty
+`b·c`) or `NaN` (0/0).
+
+Replaces the earlier `max(b·c, 1)` hack, which silently reported an undefined
+odds ratio as a specific finite value.
+"""
+function odds_ratio(ct::AbstractMatrix{<:Integer}; correction::Symbol=:haldane)
+    a, b = ct[1, 1], ct[1, 2]
+    c, d = ct[2, 1], ct[2, 2]
+    if correction === :haldane
+        if a == 0 || b == 0 || c == 0 || d == 0
+            return ((a + 0.5) * (d + 0.5)) / ((b + 0.5) * (c + 0.5))
+        end
+        return (a * d) / (b * c)
+    elseif correction === :none
+        return (a * d) / (b * c)
+    else
+        error("Unknown odds_ratio correction: $correction. Use :haldane or :none")
+    end
+end
+
+"""
     test_association(item_a, item_b, record_items;
                      test::Symbol=:fisher)
 
@@ -58,8 +87,8 @@ function test_association(item_a::AbstractString, item_b::AbstractString,
     col_b = ct[1, 1] + ct[2, 1]
     expected = (row_a * col_b) / n
 
-    # Odds ratio
-    or_val = (ct[1,1] * ct[2,2]) / max(ct[1,2] * ct[2,1], 1)
+    # Odds ratio (Haldane–Anscombe corrected for zero cells)
+    or_val = odds_ratio(ct)
 
     # Statistical test
     if test == :fisher

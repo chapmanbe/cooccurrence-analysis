@@ -22,7 +22,7 @@ using Distributions: Beta, quantile
 export load_event_data, get_record_summary, build_transactions, build_transactions_with_ids,
        filter_event_by_timing,
        mine_frequent_itemsets, mine_association_rules,
-       build_contingency_table, test_association, validate_rules,
+       build_contingency_table, odds_ratio, test_association, validate_rules,
        adjust_pvalues,
        stratified_analysis, compare_strata,
        run_full_pipeline,

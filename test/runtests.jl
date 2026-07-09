@@ -255,6 +255,24 @@ end
         @test ct[1, 1] + ct[2, 1] == 14  # has Item02
     end
 
+    @testset "odds_ratio zero-cell handling (C5)" begin
+        # No zero cell: raw ratio (a·d)/(b·c).
+        @test odds_ratio([10 2; 3 20]) ≈ (10*20)/(2*3)
+        @test odds_ratio([10 2; 3 20]; correction=:none) ≈ (10*20)/(2*3)
+
+        # Zero in b (perfect association): raw is Inf, Haldane keeps it finite.
+        zc = [5 0; 0 5]
+        @test isfinite(odds_ratio(zc))                       # Haldane-corrected
+        @test odds_ratio(zc) ≈ ((5.5)*(5.5))/((0.5)*(0.5))
+        @test odds_ratio(zc; correction=:none) == Inf
+
+        # 0/0 raw is NaN; Haldane is finite.
+        @test isfinite(odds_ratio([0 0; 3 4]))
+        @test isnan(odds_ratio([0 0; 3 4]; correction=:none))
+
+        @test_throws ErrorException odds_ratio([1 1; 1 1]; correction=:bogus)
+    end
+
     @testset "test_association" begin
         result = test_association("Item01", "Item02", record_items; test=:fisher)
         @test result.observed == 10

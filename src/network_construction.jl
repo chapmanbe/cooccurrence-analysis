@@ -113,7 +113,7 @@ function compute_pairwise_associations(event_df::DataFrame;
             expected = (row_a * col_b) / n
             lift = expected > 0 ? observed / expected : 0.0
             phi = phi_coefficient(ct)
-            or_val = (ct[1,1] * ct[2,2]) / max(ct[1,2] * ct[2,1], 1)
+            or_val = odds_ratio(ct)
 
             # Statistical test
             result = test_association(a, b, record_items; test)
