@@ -689,6 +689,33 @@ end
     @test result.converged
 end
 
+@testset "fit_bernoulli_mixture empty-cluster guard (C6, C8)" begin
+    # K far larger than the true cluster count forces components to empty out.
+    # Without the M-step guard this produced NaN θ (0/0) that poisoned the fit.
+    rng = MersenneTwister(7)
+    N = 60
+    X = falses(N, 4)
+    for i in 1:30; X[i,1] = rand(rng) < 0.85; X[i,2] = rand(rng) < 0.8; end
+    for i in 31:60; X[i,3] = rand(rng) < 0.85; X[i,4] = rand(rng) < 0.8; end
+
+    result = fit_bernoulli_mixture(X, 10; n_init=2, rng=MersenneTwister(1))
+    @test all(isfinite, result.theta)
+    @test !any(isnan, result.theta)
+    @test all(0.0 .<= result.theta .<= 1.0)
+    @test all(result.pi .>= 0.0)
+    @test isapprox(sum(result.pi), 1.0; atol=1e-8)
+    @test isfinite(result.log_likelihood)
+    @test isfinite(result.bic)
+
+    # Force non-convergence (max_iter=1): the returned params, LL and BIC must
+    # still be self-consistent and finite (C8 resync after the final M-step).
+    r1 = fit_bernoulli_mixture(X, 3; n_init=1, max_iter=1, rng=MersenneTwister(2))
+    @test !r1.converged
+    @test isfinite(r1.log_likelihood)
+    @test isfinite(r1.bic)
+    @test all(isfinite, r1.theta)
+end
+
 @testset "select_K" begin
     rng = MersenneTwister(42)
     N = 60

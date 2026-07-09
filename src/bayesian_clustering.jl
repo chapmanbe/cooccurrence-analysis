@@ -168,9 +168,8 @@ function fit_bernoulli_mixture(X::AbstractMatrix{Bool}, K::Int;
         theta_sorted = best.theta[order, :]
         pi_sorted = best.pi[order]
         resp_sorted = best.responsibilities[:, order]
-        assignments_sorted = [findfirst(==(order[best.assignments[n]]), 1:K)
-                              for n in 1:N]
-        # Remap: new class i was old class order[i]
+        # Remap: new class i was old class order[i], so an old assignment a maps
+        # to its new position inv_order[a].
         inv_order = invperm(order)
         assignments_sorted = [inv_order[best.assignments[n]] for n in 1:N]
         best = BernoulliMixtureResult(K, theta_sorted, pi_sorted, resp_sorted,
@@ -205,14 +204,14 @@ function _em_single_run(X::AbstractMatrix{Bool}, K::Int, N::Int, D::Int;
     n_iter = 0
     converged = false
 
-    for iter in 1:max_iter
-        n_iter = iter
-
-        # ── E-step (vectorized) ──
-        log_theta = log.(theta)          # K × D
+    # ── E-step (vectorized): fill `r`/`log_r` for the current theta/pi and
+    # return the marginal log-likelihood. Deterministic in theta/pi (no RNG), so
+    # it can be safely re-run after the final M-step to resync r/LL with params.
+    function estep!()
+        log_theta = log.(theta)            # K × D
         log_1m_theta = log.(1.0 .- theta)  # K × D
 
-        # log_r[n,k] = log(pi[k]) + X[n,:] · log(theta[k,:]) + (1-X[n,:]) · log(1-theta[k,:])
+        # log_r[n,k] = log(pi[k]) + X[n,:]·log(theta[k,:]) + (1-X[n,:])·log(1-theta[k,:])
         mul!(log_r, X_f, log_theta')
         log_r .+= (1.0 .- X_f) * log_1m_theta'
         for k in 1:K
@@ -233,6 +232,13 @@ function _em_single_run(X::AbstractMatrix{Bool}, K::Int, N::Int, D::Int;
                 r[n, k] = exp(log_r[n, k] - log_sum)
             end
         end
+        return ll
+    end
+
+    for iter in 1:max_iter
+        n_iter = iter
+
+        ll = estep!()
 
         # Convergence check
         if abs(ll - prev_ll) < tol
@@ -244,13 +250,16 @@ function _em_single_run(X::AbstractMatrix{Bool}, K::Int, N::Int, D::Int;
 
         # ── M-step (MAP with priors) ──
         N_k = vec(sum(r, dims=1))  # effective count per class
+        # Guard against empty/near-empty components: an unclamped N_k → 0 makes
+        # the flat-prior θ update 0/0 = NaN (and clamp(NaN)=NaN in Julia), which
+        # poisons the whole fit; dirichlet_prior < 1 can likewise drive π negative.
+        N_k_safe = max.(N_k, eps())
 
-        # Mixing proportions (Dirichlet MAP)
+        # Mixing proportions (Dirichlet MAP), floored at eps() so π stays positive
         for k in 1:K
-            pi_k[k] = N_k[k] + dirichlet_prior - 1.0
+            pi_k[k] = max(N_k[k] + dirichlet_prior - 1.0, eps())
         end
-        pi_sum = sum(pi_k)
-        pi_k ./= pi_sum
+        pi_k ./= sum(pi_k)
 
         # Item probabilities (Beta MAP, per-feature priors)
         # s_kd = sum_n r[n,k] * X[n,d]
@@ -258,10 +267,17 @@ function _em_single_run(X::AbstractMatrix{Bool}, K::Int, N::Int, D::Int;
         for k in 1:K
             for d in 1:D
                 theta[k, d] = (s_kd[k, d] + alpha_vec[d] - 1.0) /
-                              (N_k[k] + alpha_vec[d] + beta_vec[d] - 2.0)
+                              (N_k_safe[k] + alpha_vec[d] + beta_vec[d] - 2.0)
                 theta[k, d] = clamp(theta[k, d], 1e-10, 1.0 - 1e-10)
             end
         end
+    end
+
+    # If we exited on max_iter (not convergence), the last M-step advanced
+    # theta/pi past the responsibilities and LL computed from the prior E-step.
+    # Resync so params, r, LL, assignments, and BIC all describe the same state.
+    if !converged
+        prev_ll = estep!()
     end
 
     assignments = [argmax(@view r[n, :]) for n in 1:N]
