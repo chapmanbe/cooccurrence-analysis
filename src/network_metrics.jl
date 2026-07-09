@@ -85,13 +85,24 @@ end
 """
     _modularity_gain(g::SimpleWeightedGraph, node::Int, community::Int,
                      assignments::Vector{Int}, strengths::Vector{Float64},
-                     m2::Float64) -> Float64
+                     comm_strength::Vector{Float64}, m2::Float64) -> Float64
 
-Compute the modularity gain from moving `node` into `community`.
+Gain in the file's own `_modularity` Q from *adding* `node` to `community`, with
+`node` treated as not currently belonging to `community` (its strength is
+excluded from the community total). Derived directly from the per-community form
+`Q = Σ_c [2·L_c/m2 − (D_c/m2)²]`:
+
+    ΔQ = 2·k_in/m2 − 2·s_tot·k_i/m2²
+
+where `k_in` is the edge weight from `node` into `community`, `s_tot` is the
+community strength excluding `node`, and `k_i = strengths[node]`. A move
+`current → target` is evaluated as `gain(target) − gain(current\\{node})`; the
+`k_i²` self-terms cancel between the two calls. `comm_strength[c]` is the
+maintained total node strength of community `c` (see `_louvain`).
 """
 function _modularity_gain(g::SimpleWeightedGraph, node::Int, community::Int,
                           assignments::Vector{Int}, strengths::Vector{Float64},
-                          m2::Float64)
+                          comm_strength::Vector{Float64}, m2::Float64)
     # Sum of weights from node to members of target community
     k_in = 0.0
     for nb in neighbors(g, node)
@@ -100,16 +111,14 @@ function _modularity_gain(g::SimpleWeightedGraph, node::Int, community::Int,
         end
     end
 
-    # Sum of strengths in target community
-    s_tot = 0.0
-    for v in 1:nv(g)
-        if assignments[v] == community
-            s_tot += strengths[v]
-        end
+    # Community strength, excluding `node` itself if it currently sits here
+    s_tot = comm_strength[community]
+    if assignments[node] == community
+        s_tot -= strengths[node]
     end
 
     k_i = strengths[node]
-    return k_in / m2 - (s_tot * k_i) / (m2 * m2) * 2.0
+    return 2.0 * k_in / m2 - 2.0 * (s_tot * k_i) / (m2 * m2)
 end
 
 """
@@ -191,6 +200,11 @@ function _louvain(g::SimpleWeightedGraph, max_iter::Int)
         strengths[dst(e)] += w
     end
 
+    # Per-community total node strength, maintained incrementally as nodes move.
+    # Community labels are node indices in 1:n, so a Vector indexed by label works.
+    # Each node starts alone, so its community's strength is its own strength.
+    comm_strength = copy(strengths)
+
     for _ in 1:max_iter
         improved = false
         for node in 1:n
@@ -202,15 +216,18 @@ function _louvain(g::SimpleWeightedGraph, max_iter::Int)
                 push!(neighbor_comms, assignments[nb])
             end
 
-            # Temporarily remove node from its community for gain calculation
+            # Loss from removing the node from its current community (community
+            # strength excluding the node) — fixed across all candidate targets.
+            loss = _modularity_gain(g, node, current_comm, assignments,
+                                    strengths, comm_strength, m2)
+
             best_comm = current_comm
             best_gain = 0.0
 
             for comm in neighbor_comms
                 comm == current_comm && continue
-                gain = _modularity_gain(g, node, comm, assignments, strengths, m2)
-                # Also compute the loss from leaving current community
-                loss = _modularity_gain(g, node, current_comm, assignments, strengths, m2)
+                gain = _modularity_gain(g, node, comm, assignments,
+                                        strengths, comm_strength, m2)
                 net_gain = gain - loss
                 if net_gain > best_gain
                     best_gain = net_gain
@@ -219,6 +236,8 @@ function _louvain(g::SimpleWeightedGraph, max_iter::Int)
             end
 
             if best_comm != current_comm
+                comm_strength[current_comm] -= strengths[node]
+                comm_strength[best_comm] += strengths[node]
                 assignments[node] = best_comm
                 improved = true
             end

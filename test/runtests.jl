@@ -1,7 +1,8 @@
 using Test
 using DataFrames
 import Arrow
-using Graphs: nv, ne
+using Graphs: nv, ne, add_edge!
+using SimpleWeightedGraphs: SimpleWeightedGraph
 using CairoMakie: Figure
 using Random
 
@@ -477,6 +478,49 @@ end
         # Every item should be in some community
         all_items_in_comm = vcat(values(comm.communities)...)
         @test Set(all_items_in_comm) == Set(net.items)
+    end
+
+    @testset "louvain modularity gain matches ΔQ (C1, C2, T6)" begin
+        # Two triangles (nodes 1-2-3 and 4-5-6) joined by one weak bridge.
+        # The optimal partition is the two cliques.
+        g = SimpleWeightedGraph(6)
+        for (u, v) in [(1,2),(2,3),(1,3),(4,5),(5,6),(4,6)]
+            add_edge!(g, u, v, 1.0)
+        end
+        add_edge!(g, 3, 4, 0.1)  # weak bridge
+
+        # Node strengths and a helper to recompute per-community strength totals.
+        strengths = [sum(g.weights[v, :]) for v in 1:6]
+        m2 = sum(strengths)  # = 2m
+        comm_strength(assign) = [sum(strengths[v] for v in 1:6 if assign[v] == c; init=0.0)
+                                 for c in 1:6]
+
+        # The gain formula must agree with the file's own _modularity: for any
+        # single-node move, net_gain = gain(target) − gain(current) == ΔQ exactly.
+        # This is the direct check that C1's factor-of-2 and C2's node-exclusion
+        # are both correct.
+        assign = collect(1:6)  # all singletons
+        cs = comm_strength(assign)
+        for (node, target) in [(2, 1), (5, 4), (4, 3)]
+            cur = assign[node]
+            gain = CooccurrenceAnalysis._modularity_gain(g, node, target, assign, strengths, cs, m2)
+            loss = CooccurrenceAnalysis._modularity_gain(g, node, cur, assign, strengths, cs, m2)
+            net_gain = gain - loss
+            q_before = CooccurrenceAnalysis._modularity(g, assign)
+            moved = copy(assign); moved[node] = target
+            dq = CooccurrenceAnalysis._modularity(g, moved) - q_before
+            @test net_gain ≈ dq atol=1e-10
+        end
+
+        # Louvain recovers the two cliques and maximizes modularity vs. the
+        # trivial all-in-one-community partition.
+        final = CooccurrenceAnalysis._louvain(g, 100)
+        @test final[1] == final[2] == final[3]
+        @test final[4] == final[5] == final[6]
+        @test final[1] != final[4]
+        q_split = CooccurrenceAnalysis._modularity(g, final)
+        q_merged = CooccurrenceAnalysis._modularity(g, fill(1, 6))
+        @test q_split > q_merged
     end
 
     @testset "label_propagation" begin
