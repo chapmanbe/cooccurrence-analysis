@@ -3,7 +3,7 @@ using DataFrames
 import Arrow
 using Graphs: nv, ne, add_edge!
 using SimpleWeightedGraphs: SimpleWeightedGraph
-using CairoMakie: Figure
+using CairoMakie: Figure, Axis, BarPlot
 using Random
 
 push!(LOAD_PATH, joinpath(@__DIR__, "..", "src"))
@@ -1027,6 +1027,18 @@ end
         # Should not error when top_n exceeds the number of distinct items
         fig = plot_item_prevalence(event_df; top_n=1000)
         @test fig isa Figure
+    end
+
+    @testset "plot_item_prevalence group bars nonzero (C4)" begin
+        # The old ^f/^m group-detection regexes matched neither "A" nor "B",
+        # silently zeroing the two group bar series. Assert all three series
+        # (overall + both groups) carry a positive bar.
+        fig = plot_item_prevalence(event_df; top_n=8)
+        ax = only(filter(x -> x isa Axis, fig.content))
+        bars = filter(p -> p isa BarPlot, ax.scene.plots)
+        # direction=:x → the height is the 2nd coordinate of each Point
+        series_max = [maximum(pt[2] for pt in b[1][]) for b in bars]
+        @test count(>(0.0), series_max) >= 3
     end
 
     @testset "plot_cooccurrence_heatmap all records" begin

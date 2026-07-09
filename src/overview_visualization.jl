@@ -222,10 +222,15 @@ function plot_item_prevalence(event_df::DataFrame;
     # One row per (id, item) so we can count unique records
     unique_ps = unique(event_df[:, [:id, :item, :Group]])
 
-    # Detect group column values
-    groupvals = unique(event_df.Group)
-    group_b_vals = filter(v -> occursin(r"(?i)^f", string(v)), groupvals)
-    group_a_vals   = filter(v -> occursin(r"(?i)^m", string(v)), groupvals)
+    # Two-series prevalence plot: use the actual group values (no domain regex).
+    # The two lowest sorted group values drive the two coloured series; the
+    # overall series always covers every record. (N-group generalization is a
+    # Phase 3/4 concern; this fix just makes the bars reflect real groups.)
+    groupvals = sort(unique(event_df.Group))
+    group_a_vals = length(groupvals) >= 1 ? [groupvals[1]] : eltype(groupvals)[]
+    group_b_vals = length(groupvals) >= 2 ? [groupvals[2]] : eltype(groupvals)[]
+    label_a = isempty(group_a_vals) ? "" : string(group_a_vals[1])
+    label_b = isempty(group_b_vals) ? "" : string(group_b_vals[1])
 
     n_total_pts  = length(unique(event_df.id))
     group_b_ids  = Set(unique_ps[in.(unique_ps.Group, Ref(Set(group_b_vals))), :id])
@@ -270,9 +275,9 @@ function plot_item_prevalence(event_df::DataFrame;
     barplot!(ax, ys_ov, reverse(pct_overall); direction=:x,
              color=(col_overall, 0.7), bar_labels=nothing, label="Overall", width=bar_h)
     barplot!(ax, ys_f, reverse(pct_group_b);  direction=:x,
-             color=(col_group_b, 0.8),  label="B",  width=bar_h)
+             color=(col_group_b, 0.8),  label=label_b,  width=bar_h)
     barplot!(ax, ys_m, reverse(pct_group_a);    direction=:x,
-             color=(col_group_a, 0.8),    label="A",    width=bar_h)
+             color=(col_group_a, 0.8),    label=label_a,    width=bar_h)
 
     Legend(fig[1, 2], ax; framevisible=false, labelsize=11)
     colsize!(fig.layout, 2, Relative(0.12))
@@ -303,13 +308,14 @@ function plot_cooccurrence_heatmap(event_df::DataFrame;
                                    group::Symbol=:both,
                                    min_items::Int=2,
                                    figsize::Tuple{Int,Int}=(750, 650))
-    # Filter by group
-    df = if group === :group_b
-        groupvals = filter(v -> occursin(r"(?i)^b", string(v)), unique(event_df.Group))
-        filter(r -> r.Group in groupvals, event_df)
-    elseif group === :group_a
-        groupvals = filter(v -> occursin(r"(?i)^a", string(v)), unique(event_df.Group))
-        filter(r -> r.Group in groupvals, event_df)
+    # Filter by group. :group_a / :group_b select the first / second sorted group
+    # value (no domain regex); :both uses every record.
+    df = if group === :group_a || group === :group_b
+        groupvals = sort(unique(event_df.Group))
+        idx = group === :group_a ? 1 : 2
+        idx > length(groupvals) && error("No group at sorted position $idx for group=$group")
+        gv = groupvals[idx]
+        filter(r -> r.Group == gv, event_df)
     else
         event_df
     end
