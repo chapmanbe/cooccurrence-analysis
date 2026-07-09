@@ -188,8 +188,9 @@ Returns a DataFrame with columns:
 A cluster is "present in group j" if `pi_mean[j, k] > presence_threshold`.
 `:negligible` means beta_weight ≤ beta_threshold (effectively unused component).
 
-When there are exactly two groups, categories are named using the group labels
-(e.g., `:group_a_only`, `:group_b_only`, `:universal`).
+A cluster present in some but not all groups is named for the present group(s),
+lowercased: `:group_a_only`, or `:group_a_and_b_only` when several (but not all)
+groups share it. Fully shared clusters are `:universal`.
 """
 function hdp_cluster_categorization(result::HDPClusteringResult;
                                     presence_threshold::Float64=0.05,
@@ -220,16 +221,12 @@ function hdp_cluster_categorization(result::HDPClusteringResult;
         elseif !any(present)
             cat = :negligible
         else
-            # Present in some but not all groups
-            if J == 2
-                # Named for two-group case
-                idx = findfirst(present)
-                raw = lowercase(labels[idx]) * "_only"
-                cat = Symbol(raw)
-            else
-                present_labels = labels[present]
-                cat = Symbol(join(present_labels, "_and_") * "_only")
-            end
+            # Present in some but not all groups: name for the present group(s).
+            # One consistent, lowercased form for any number of groups:
+            #   1 present  -> :group_<label>_only          (e.g. :group_a_only)
+            #   ≥2 present -> :group_<l1>_and_<l2>_only     (e.g. :group_a_and_b_only)
+            present_labels = labels[present]
+            cat = Symbol("group_" * join(lowercase.(present_labels), "_and_") * "_only")
         end
 
         push!(nt_fields, :category => cat)

@@ -1235,7 +1235,7 @@ end
         @test all(1 .<= result.record_assignments.assignment .<= 4)
     end
 
-    @testset "hdp_cluster_categorization" begin
+    @testset "hdp_cluster_categorization structure" begin
         result = hdp_clustering(event_df;
             group_by=:Group, K_max=4, n_init=2, rng=MersenneTwister(77))
 
@@ -1250,6 +1250,43 @@ end
         valid_cats = [:universal, :negligible, :both_present_but_unequal,
                       :group_a_only, :group_b_only]
         @test all(c -> c in valid_cats, cat_df.category)
+    end
+
+    @testset "hdp_cluster_categorization planted labels (C3, T2)" begin
+        # Plant three clusters with unambiguous cross-group structure:
+        #   {S1,S2} present in BOTH groups   -> :universal
+        #   {A1,A2} present only in group A   -> :group_a_only
+        #   {B1,B2} present only in group B   -> :group_b_only
+        # The previous test never exercised the single-group branch, which is
+        # exactly why the :a_only/:b_only prefix bug (C3) survived. Assert the
+        # actual labels here, not merely that they're valid symbols.
+        function planted_event_df()
+            rows = NamedTuple[]
+            id = 0
+            addrec!(group, items) = begin
+                id += 1
+                for (s, it) in enumerate(items)
+                    push!(rows, (id=id, seq=s, Group=group, item=it, year=2020))
+                end
+            end
+            for _ in 1:40; addrec!("A", ["S1", "S2"]); end  # shared, group A
+            for _ in 1:40; addrec!("B", ["S1", "S2"]); end  # shared, group B
+            for _ in 1:60; addrec!("A", ["A1", "A2"]); end  # group-A-only
+            for _ in 1:60; addrec!("B", ["B1", "B2"]); end  # group-B-only
+            DataFrame(rows)
+        end
+
+        result = hdp_clustering(planted_event_df();
+            group_by=:Group, K_max=6, n_init=4, rng=MersenneTwister(2026))
+        cat_df = hdp_cluster_categorization(result)
+        cats = Set(cat_df.category)
+
+        @test :universal in cats
+        @test :group_a_only in cats
+        @test :group_b_only in cats
+        # The buggy prefix-less forms must never appear.
+        @test !(:a_only in cats)
+        @test !(:b_only in cats)
     end
 
     @testset "clustering_summary prints without error" begin
