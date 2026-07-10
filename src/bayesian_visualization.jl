@@ -44,12 +44,15 @@ function plot_class_probabilities(result::CooccurrenceAnalysisResult;
         xticklabelrotation=π/3,
         xticklabelsize=9)
 
+    # θ is a probability: pin both the heatmap and its colorbar to (0, 1) so the
+    # rendered colors and the bar agree (they diverged when min(θ) > 0, since the
+    # heatmap autoscaled while the bar was fixed at (0, max)).
     heatmap!(ax, 1:length(item_labels), 1:K, theta_sub';
-             colormap=:YlOrRd)
+             colormap=:YlOrRd, colorrange=(0.0, 1.0))
 
     Colorbar(fig[1, 2]; label="P(item | class)",
              colormap=:YlOrRd,
-             limits=(0.0, maximum(theta_sub)))
+             limits=(0.0, 1.0))
 
     return fig
 end
@@ -420,7 +423,7 @@ function plot_hdp_sharing_heatmap(result::HDPClusteringResult;
         yticklabelsize=9)
 
     heatmap!(ax, 1:J, 1:K_act, pi_plot';
-             colormap=:Blues, colorrange=(0, maximum(pi_plot) + 1e-6))
+             colormap=:YlOrRd, colorrange=(0, maximum(pi_plot) + 1e-6))
 
     # Cell value annotations
     for ci in 1:K_act
@@ -432,7 +435,7 @@ function plot_hdp_sharing_heatmap(result::HDPClusteringResult;
         end
     end
 
-    Colorbar(fig[1, 2]; label="π[j,k]", colormap=:Blues,
+    Colorbar(fig[1, 2]; label="π[j,k]", colormap=:YlOrRd,
              limits=(0, maximum(pi_plot) + 1e-6))
 
     # Category annotation column
@@ -466,9 +469,9 @@ extends to the **left** (negative x) and the second group extends to the
 **right** (positive x). Bar length equals the posterior mean π[j,k].
 
 Clusters are ordered top-to-bottom by global stick weight β_k descending.
-Bars are coloured by cluster category (universal=blue, group1-only=orange,
-group2-only=green, group-specific=purple) when a category column is present
-in `result.group_profiles`.
+Bars are coloured by cluster category from `hdp_cluster_categorization`
+(universal=blue, first-group-only=orange, second-group-only=green,
+both-present-but-unequal=purple, negligible=grey).
 """
 function plot_hdp_cluster_butterfly(result::HDPClusteringResult;
                                     beta_threshold::Float64=0.01,
@@ -486,21 +489,23 @@ function plot_hdp_cluster_butterfly(result::HDPClusteringResult;
     active = active[sortperm(hdp.beta_mean[active], rev=true)]
     K_act = length(active)
 
-    # Category colours (fall back to uniform blue if column absent)
-    cat_col = Symbol(group_labels[1] * "_only")  # e.g. Group B_only
-    has_cat = hasproperty(result.group_profiles, :category)
-    cat_map = Dict(
-        "universal"   => palette[1],   # blue
-        "negligible"  => :lightgray,
+    # Category colours, driven by hdp_cluster_categorization (like the sharing
+    # heatmap) rather than a nonexistent :category column on group_profiles.
+    # Keys must match the actual category symbols, i.e. lowercased :group_<x>_only.
+    cat_df = hdp_cluster_categorization(result; beta_threshold)
+    cat_by_cluster = Dict(row.cluster => row.category for row in eachrow(cat_df))
+    g1 = lowercase(string(group_labels[1]))
+    g2 = lowercase(string(group_labels[2]))
+    cat_map = Dict{Symbol, Any}(
+        :universal                => palette[1],   # blue
+        :negligible               => :lightgray,
+        :both_present_but_unequal => palette[4],   # reddish-purple
+        Symbol("group_$(g1)_only") => palette[2],  # orange
+        Symbol("group_$(g2)_only") => palette[3],  # green
     )
-    cat_map[group_labels[1] * "_only"] = palette[2]  # orange
-    cat_map[group_labels[2] * "_only"] = palette[3]  # green
-    cat_map["group_specific_item"]     = palette[4]  # reddish-purple
 
     function cluster_color(ki)
-        has_cat || return palette[1]
-        row = result.group_profiles[ki, :]
-        cat = hasproperty(row, :category) ? string(row.category) : "universal"
+        cat = get(cat_by_cluster, ki, :universal)
         return get(cat_map, cat, palette[1])
     end
 
