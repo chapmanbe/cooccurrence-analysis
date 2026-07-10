@@ -334,6 +334,15 @@ end
         end
     end
 
+    @testset "_normalize_rule_key preserves consequent (C10)" begin
+        nk = CooccurrenceAnalysis._normalize_rule_key
+        # Antecedent order must not matter (cross-strata matching).
+        @test nk(["X", "Y"], "Z") == nk(["Y", "X"], "Z")
+        # Different consequents over the same item multiset must NOT collide.
+        @test nk(["X", "Y"], "Z") != nk(["X", "Z"], "Y")
+        @test nk(["X", "Z"], "Y") != nk(["Y", "Z"], "X")
+    end
+
     @testset "compare_strata" begin
         strat = stratified_analysis(event_df;
             min_support=0.05, min_confidence=0.1, min_count=nothing)

@@ -85,12 +85,16 @@ end
 """
     _normalize_rule_key(lhs, rhs) -> String
 
-Create a canonical string key for a rule, independent of direction.
-Sorts all items alphabetically to enable cross-strata matching.
+Canonical string key for a rule, independent of the *internal order* of the
+antecedent but preserving the antecedent/consequent split. The LHS items are
+sorted (so `{X,Y}→Z` and `{Y,X}→Z` match across strata), then joined with the
+RHS via `=>`. Keying the full item multiset instead — the previous behavior —
+collapsed distinct rules like `{X,Y}→Z` and `{X,Z}→Y` into one, silently
+dropping all but the max-lift copy.
 """
 function _normalize_rule_key(lhs, rhs)
-    all_items = sort(vcat(collect(lhs), [rhs]))
-    return join(all_items, " + ")
+    lhs_sorted = sort(collect(lhs))
+    return join(lhs_sorted, " + ") * " => " * string(rhs)
 end
 
 """
