@@ -228,10 +228,9 @@ function _credible_intervals(samples::AbstractMatrix, level::Float64)
     α = (1.0 - level) / 2.0
     ci = Matrix{Float64}(undef, K, 2)
     for k in 1:K
-        col = sort(samples[:, k])
-        n = length(col)
-        ci[k, 1] = col[max(1, ceil(Int, α * n))]
-        ci[k, 2] = col[max(1, ceil(Int, (1.0 - α) * n))]
+        col = @view samples[:, k]
+        ci[k, 1] = quantile(col, α)
+        ci[k, 2] = quantile(col, 1.0 - α)
     end
     return ci
 end
@@ -246,10 +245,9 @@ function _credible_intervals_3d(samples::Array{Float64, 3}, level::Float64)
     α = (1.0 - level) / 2.0
     ci = Array{Float64}(undef, K, D, 2)
     for k in 1:K, d in 1:D
-        col = sort(samples[:, k, d])
-        n = length(col)
-        ci[k, d, 1] = col[max(1, ceil(Int, α * n))]
-        ci[k, d, 2] = col[max(1, ceil(Int, (1.0 - α) * n))]
+        col = @view samples[:, k, d]
+        ci[k, d, 1] = quantile(col, α)
+        ci[k, d, 2] = quantile(col, 1.0 - α)
     end
     return ci
 end
