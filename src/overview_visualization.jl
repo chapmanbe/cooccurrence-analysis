@@ -95,18 +95,19 @@ function plot_upset(txns::DataFrame;
     hidedecorations!(ax_dots, label=false, ticklabels=false, ticks=false)
     hidespines!(ax_dots)
 
-    # Background dots (gray)
-    for i in 1:n_combos, j in 1:n_items
-        scatter!(ax_dots, [Float64(i)], [Float64(j)];
-                 color=:gray85, markersize=8)
-    end
+    # Background dots (gray) — one vectorized scatter over the whole grid
+    bg_x = Float64[i for i in 1:n_combos for _ in 1:n_items]
+    bg_y = Float64[j for _ in 1:n_combos for j in 1:n_items]
+    scatter!(ax_dots, bg_x, bg_y; color=:gray85, markersize=8)
 
-    # Active dots and connecting lines
+    # Active dots (one scatter) plus per-combo connecting lines
+    act_x = Float64[]
+    act_y = Float64[]
     for (i, combo) in enumerate(combos)
         active = findall(combo)
         for j in active
-            scatter!(ax_dots, [Float64(i)], [Float64(j)];
-                     color=:black, markersize=10)
+            push!(act_x, Float64(i))
+            push!(act_y, Float64(j))
         end
         if length(active) > 1
             y_min, y_max = extrema(active)
@@ -115,6 +116,7 @@ function plot_upset(txns::DataFrame;
                           color=:black, linewidth=2)
         end
     end
+    scatter!(ax_dots, act_x, act_y; color=:black, markersize=10)
 
     ylims!(ax_dots, 0.5, n_items + 0.5)
     xlims!(ax_dots, 0.5, n_combos + 0.5)

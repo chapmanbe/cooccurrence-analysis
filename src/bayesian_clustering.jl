@@ -192,7 +192,8 @@ function _em_single_run(X::AbstractMatrix{Bool}, K::Int, N::Int, D::Int;
                          dirichlet_prior::Float64,
                          max_iter::Int, tol::Float64,
                          rng::AbstractRNG)
-    X_f = Float64.(X)  # precompute for matrix ops
+    X_f = Float64.(X)              # precompute for matrix ops
+    one_minus_X_f = 1.0 .- X_f     # precompute once (was rebuilt every E-step)
 
     # Random initialization
     theta = clamp.(rand(rng, K, D) .* 0.6 .+ 0.2, 0.01, 0.99)
@@ -213,7 +214,7 @@ function _em_single_run(X::AbstractMatrix{Bool}, K::Int, N::Int, D::Int;
 
         # log_r[n,k] = log(pi[k]) + X[n,:]·log(theta[k,:]) + (1-X[n,:])·log(1-theta[k,:])
         mul!(log_r, X_f, log_theta')
-        log_r .+= (1.0 .- X_f) * log_1m_theta'
+        log_r .+= one_minus_X_f * log_1m_theta'
         for k in 1:K
             @views log_r[:, k] .+= log(pi_k[k])
         end
