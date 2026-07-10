@@ -38,6 +38,20 @@ NamedTuple with:
 - `group_a_communities`, `group_b_communities`: CommunityResult for each group
 - `group_a_metrics`, `group_b_metrics`: Per-node metrics DataFrames
 """
+# One network stratum: build + analyze the co-occurrence network for a group.
+function _network_stratum(event_df::DataFrame; group_filter,
+                          weight_metric::Symbol, min_count::Int, alpha::Float64,
+                          test::Symbol, correction::Symbol, community_method::Symbol,
+                          timing_filter::Symbol, concurrent_window::Int,
+                          exclusive_items::Union{Nothing, AbstractDict})
+    net = build_cooccurrence_network(event_df;
+        weight_metric, min_count, alpha, group_filter, test, correction,
+        timing_filter, concurrent_window, exclusive_items)
+    comm = detect_communities(net; method=community_method)
+    metrics = compute_network_metrics(net)
+    return (net=net, communities=comm, metrics=metrics)
+end
+
 function stratified_network_analysis(event_df::DataFrame;
                                       weight_metric::Symbol=:lift,
                                       min_count::Int=30,
@@ -46,33 +60,12 @@ function stratified_network_analysis(event_df::DataFrame;
                                       correction::Symbol=:bh,
                                       community_method::Symbol=:louvain,
                                       timing_filter::Symbol=:all,
-                                      concurrent_window::Int=0)
-    results = Dict{Symbol, Any}()
-
-    for group in ["A", "B"]
-        prefix = Symbol("group_", lowercase(group))
-        println("── Building $group co-occurrence network ──")
-
-        net = build_cooccurrence_network(event_df;
-            weight_metric, min_count, alpha, group_filter=group, test, correction,
-            timing_filter, concurrent_window)
-        comm = detect_communities(net; method=community_method)
-        metrics = compute_network_metrics(net)
-
-        println("  Nodes: $(nv(net.graph)), Edges: $(ne(net.graph))")
-        println("  Communities: $(comm.n_communities), Modularity: $(round(comm.modularity, digits=4))")
-
-        results[Symbol(prefix, :_net)] = net
-        results[Symbol(prefix, :_communities)] = comm
-        results[Symbol(prefix, :_metrics)] = metrics
-    end
-
-    return (group_a_net=results[:group_a_net],
-            group_b_net=results[:group_b_net],
-            group_a_communities=results[:group_a_communities],
-            group_b_communities=results[:group_b_communities],
-            group_a_metrics=results[:group_a_metrics],
-            group_b_metrics=results[:group_b_metrics])
+                                      concurrent_window::Int=0,
+                                      exclusive_items::Union{Nothing, AbstractDict}=nothing,
+                                      verbose::Bool=true)
+    return stratify_by(_network_stratum, event_df; verbose,
+        weight_metric, min_count, alpha, test, correction, community_method,
+        timing_filter, concurrent_window, exclusive_items)
 end
 
 """
@@ -175,13 +168,13 @@ function compare_networks(group_a_net::CooccurrenceNetwork,
     group_b_weights = _edge_weight_lookup(group_b_net)
 
     shared = intersect(group_a_edges, group_b_edges)
-    m_only = setdiff(group_a_edges, group_b_edges)
-    f_only = setdiff(group_b_edges, group_a_edges)
+    a_only = setdiff(group_a_edges, group_b_edges)
+    b_only = setdiff(group_b_edges, group_a_edges)
 
     # Build DataFrames
     shared_df = _edges_to_df(shared, group_a_weights, group_b_weights)
-    group_a_only_df = _edges_to_df(m_only, group_a_weights, nothing)
-    group_b_only_df = _edges_to_df(f_only, nothing, group_b_weights)
+    group_a_only_df = _edges_to_df(a_only, group_a_weights, nothing)
+    group_b_only_df = _edges_to_df(b_only, nothing, group_b_weights)
 
     # ARI on shared items
     shared_items = intersect(Set(group_a_net.items), Set(group_b_net.items))

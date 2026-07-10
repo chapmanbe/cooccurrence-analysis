@@ -124,11 +124,11 @@ strat = stratified_network_analysis(event_df;
 # %%
 # Group A network summary
 println("\n=== Group A Network ===")
-if length(strat.group_a_net.items) > 0
-    network_summary(strat.group_a_net, strat.group_a_communities)
+if length(strat["A"].net.items) > 0
+    network_summary(strat["A"].net, strat["A"].communities)
 
     println("\nGroup A metrics:")
-    group_a_metrics = sort(strat.group_a_metrics, :strength, rev=true)
+    group_a_metrics = sort(strat["A"].metrics, :strength, rev=true)
     for row in eachrow(group_a_metrics)
         println("  $(row.item) | deg=$(row.degree) str=$(row.strength) prev=$(row.prevalence)")
     end
@@ -139,11 +139,11 @@ end
 # %%
 # Group B network summary
 println("\n=== Group B Network ===")
-if length(strat.group_b_net.items) > 0
-    network_summary(strat.group_b_net, strat.group_b_communities)
+if length(strat["B"].net.items) > 0
+    network_summary(strat["B"].net, strat["B"].communities)
 
     println("\nGroup B metrics:")
-    group_b_metrics = sort(strat.group_b_metrics, :strength, rev=true)
+    group_b_metrics = sort(strat["B"].metrics, :strength, rev=true)
     for row in eachrow(group_b_metrics)
         println("  $(row.item) | deg=$(row.degree) str=$(row.strength) prev=$(row.prevalence)")
     end
@@ -153,19 +153,19 @@ end
 
 # %%
 # Side-by-side comparison plot
-if length(strat.group_a_net.items) > 0 && length(strat.group_b_net.items) > 0
-    fig_comp = plot_network_comparison(strat.group_a_net, strat.group_b_net;
-        group_a_comm=strat.group_a_communities,
-        group_b_comm=strat.group_b_communities)
+if length(strat["A"].net.items) > 0 && length(strat["B"].net.items) > 0
+    fig_comp = plot_network_comparison(strat["A"].net, strat["B"].net;
+        group_a_comm=strat["A"].communities,
+        group_b_comm=strat["B"].communities)
     save(joinpath(@__DIR__, "..", "ddata", "network_group_comparison.png"), fig_comp; px_per_unit=2)
     fig_comp
 end
 
 # %%
 # Quantitative comparison
-if length(strat.group_a_net.items) > 0 && length(strat.group_b_net.items) > 0
-    comp = compare_networks(strat.group_a_net, strat.group_b_net,
-                            strat.group_a_communities, strat.group_b_communities)
+if length(strat["A"].net.items) > 0 && length(strat["B"].net.items) > 0
+    comp = compare_networks(strat["A"].net, strat["B"].net,
+                            strat["A"].communities, strat["B"].communities)
 
     println("=== Network Comparison ===")
     println("  Shared edges: $(nrow(comp.shared_edges))")

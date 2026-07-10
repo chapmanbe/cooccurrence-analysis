@@ -97,24 +97,24 @@ strat = stratified_analysis(event_df; min_count=20, min_confidence=0.1)
 
 # %%
 println("\n=== Group A-specific top rules (by lift) ===")
-if nrow(strat.group_a_rules) > 0
-    group_a_sig = filter(row -> hasproperty(strat.group_a_rules, :significant) ?
-                      row.significant : true, strat.group_a_rules)
+if nrow(strat["A"].rules) > 0
+    group_a_sig = filter(row -> hasproperty(strat["A"].rules, :significant) ?
+                      row.significant : true, strat["A"].rules)
     results_summary(sort(group_a_sig, :Lift, rev=true); top_n=15)
 end
 
 # %%
 println("\n=== Group B-specific top rules (by lift) ===")
-if nrow(strat.group_b_rules) > 0
-    group_b_sig = filter(row -> hasproperty(strat.group_b_rules, :significant) ?
-                        row.significant : true, strat.group_b_rules)
+if nrow(strat["B"].rules) > 0
+    group_b_sig = filter(row -> hasproperty(strat["B"].rules, :significant) ?
+                        row.significant : true, strat["B"].rules)
     results_summary(sort(group_b_sig, :Lift, rev=true); top_n=15)
 end
 
 # %%
 # Compare strata
-if nrow(strat.group_a_rules) > 0 && nrow(strat.group_b_rules) > 0
-    comp = compare_strata(strat.group_a_rules, strat.group_b_rules)
+if nrow(strat["A"].rules) > 0 && nrow(strat["B"].rules) > 0
+    comp = compare_strata(strat["A"].rules, strat["B"].rules)
 
     println("\n=== Cross-Strata Comparison ===")
     for cat in [:universal, :group_a_only, :group_b_only, :group_specific_item]

@@ -26,19 +26,53 @@ function get_record_summary(event_df::DataFrame)
 end
 
 """
+    _filter_group(df::DataFrame, group_filter, exclusive_items) -> DataFrame
+
+Filter events to a single group and drop items that belong exclusively to OTHER
+groups. `group_filter === nothing` returns `df` unchanged. `exclusive_items`
+maps a group value → the set of items exclusive to that group (caller-supplied
+domain knowledge); `nothing` disables the item drop. When filtering to group
+`g`, any item appearing in some other group's exclusive set is removed.
+
+This is the single home for the group/exclusive-item filter, shared by
+`build_transactions`, `compute_pairwise_associations`, and
+`build_cooccurrence_network`.
+"""
+function _filter_group(df::DataFrame, group_filter,
+                       exclusive_items::Union{Nothing, AbstractDict})
+    group_filter === nothing && return df
+    df = filter(row -> row.Group == group_filter, df)
+    exclusive_items === nothing && return df
+
+    drop = Set{String}()
+    for (g, items) in exclusive_items
+        isequal(g, group_filter) && continue
+        for it in items
+            push!(drop, String(it))
+        end
+    end
+    isempty(drop) && return df
+    return filter(row -> !(String(row.item) in drop), df)
+end
+
+"""
     build_transactions(event_df::DataFrame;
-                       group_filter::Union{AbstractString, Nothing}=nothing,
+                       group_filter=nothing,
                        min_items::Int=2,
                        timing_filter::Symbol=:all,
                        concurrent_window::Int=0,
-                       year_col::Symbol=:year) -> DataFrame
+                       year_col::Symbol=:year,
+                       exclusive_items=nothing) -> DataFrame
 
 Transform event-level data into a one-hot record × item boolean DataFrame
 suitable for RuleMiner.jl's `Txns()` constructor.
 
 # Arguments
 - `event_df`: Raw event DataFrame with at least `:id`, `:item`, `:Group` columns
-- `group_filter`: If `"A"` or `"B"`, keep only that group
+- `group_filter`: If set to a group value, keep only that group's records
+- `exclusive_items`: Optional `Dict(group_value => Set(item names))` of items
+  exclusive to each group. When `group_filter` is set, items exclusive to OTHER
+  groups are dropped. `nothing` (default) disables this.
 - `min_items`: Minimum number of distinct items per record (default 2).
   Records with fewer distinct items are excluded since they cannot contribute
   to co-occurrence patterns.
@@ -67,13 +101,14 @@ true pair-level analysis would require restructuring to a pair-by-item
 representation.
 """
 function build_transactions(event_df::DataFrame;
-                            group_filter::Union{AbstractString, Nothing}=nothing,
+                            group_filter=nothing,
                             min_items::Int=2,
                             timing_filter::Symbol=:all,
                             concurrent_window::Int=0,
-                            year_col::Symbol=:year)
+                            year_col::Symbol=:year,
+                            exclusive_items::Union{Nothing, AbstractDict}=nothing)
     onehot, _ = _build_transactions_internal(event_df;
-        group_filter, min_items, timing_filter, concurrent_window, year_col)
+        group_filter, min_items, timing_filter, concurrent_window, year_col, exclusive_items)
     return onehot
 end
 
@@ -86,13 +121,14 @@ record IDs. Useful for callers that need to track which records ended
 up in the binary matrix (e.g. attaching cluster assignments back to ids).
 """
 function build_transactions_with_ids(event_df::DataFrame;
-                                       group_filter::Union{AbstractString, Nothing}=nothing,
+                                       group_filter=nothing,
                                        min_items::Int=2,
                                        timing_filter::Symbol=:all,
                                        concurrent_window::Int=0,
-                                       year_col::Symbol=:year)
+                                       year_col::Symbol=:year,
+                                       exclusive_items::Union{Nothing, AbstractDict}=nothing)
     return _build_transactions_internal(event_df;
-        group_filter, min_items, timing_filter, concurrent_window, year_col)
+        group_filter, min_items, timing_filter, concurrent_window, year_col, exclusive_items)
 end
 
 """
@@ -141,27 +177,17 @@ function filter_event_by_timing(event_df::DataFrame;
 end
 
 function _build_transactions_internal(event_df::DataFrame;
-                                       group_filter::Union{AbstractString, Nothing}=nothing,
+                                       group_filter=nothing,
                                        min_items::Int=2,
                                        timing_filter::Symbol=:all,
                                        concurrent_window::Int=0,
-                                       year_col::Symbol=:year)
+                                       year_col::Symbol=:year,
+                                       exclusive_items::Union{Nothing, AbstractDict}=nothing)
     timing_filter in (:all, :concurrent, :sequential) ||
         error("timing_filter must be :all, :concurrent, or :sequential; got :$timing_filter")
 
-    df = event_df
-
-    # Filter by group if requested
-    if group_filter !== nothing
-        df = filter(row -> row.Group == group_filter, df)
-    end
-
-    # Remove group-inappropriate items when filtering by group
-    if group_filter == "A"
-        df = filter(row -> !(row.item in GROUP_B_ONLY_ITEMS), df)
-    elseif group_filter == "B"
-        df = filter(row -> !(row.item in GROUP_A_ONLY_ITEMS), df)
-    end
+    # Filter to the requested group and drop other groups' exclusive items
+    df = _filter_group(event_df, group_filter, exclusive_items)
 
     # Aggregate per record: unique items and (if needed) per-event years
     if timing_filter === :all

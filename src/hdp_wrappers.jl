@@ -41,14 +41,11 @@ end
 
 Fit an HDP Bernoulli mixture jointly across strata defined by `group_by`.
 
-The `group_by` column must be present in `event_df`. When `group_by == :Group`,
-group-inappropriate items are automatically removed from each record's
-record before building the data matrix (uses `GROUP_A_ONLY_ITEMS` /
-`GROUP_B_ONLY_ITEMS`). For other stratification columns the full item set is used.
-
-Group-specific items (GA1, GB1, etc.) are included in the shared atom
-pool — each atom θ_k has a probability for every item, and group_a-only items
-will naturally have θ_{k,d} ≈ 0 in group_b-dominant clusters.
+The `group_by` column must be present in `event_df`. HDP handles groups
+*natively* — a single joint fit with per-group mixing weights — so it needs no
+exclusive-item filtering: every item stays in the shared atom pool. Each atom
+θ_k carries a probability for every item, and a group-exclusive item simply has
+θ_{k,d} ≈ 0 in clusters dominated by the other groups.
 
 Returns a `HDPClusteringResult` with shared cluster atoms, per-group mixing weights,
 and a categorization of clusters as universal / group_a-only / group_b-only (when

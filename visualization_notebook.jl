@@ -92,8 +92,8 @@ plot_arm_matrix(validated_rules)
 # %%
 strat = stratified_analysis(event_df;
     min_support=0.005, min_confidence=0.1, min_count=nothing)
-if nrow(strat.group_a_rules) > 0 && nrow(strat.group_b_rules) > 0
-    comp = compare_strata(strat.group_a_rules, strat.group_b_rules)
+if nrow(strat["A"].rules) > 0 && nrow(strat["B"].rules) > 0
+    comp = compare_strata(strat["A"].rules, strat["B"].rules)
     plot_arm_comparison(comp)
 end
 
@@ -131,29 +131,29 @@ plot_centrality_barchart(metrics)
 
 # %%
 net_strat = stratified_network_analysis(event_df; min_count=5, alpha=0.05)
-if nv(net_strat.group_a_net.graph) > 0 && nv(net_strat.group_b_net.graph) > 0
-    net_comp = compare_networks(net_strat.group_a_net, net_strat.group_b_net,
-                                 net_strat.group_a_communities, net_strat.group_b_communities)
-    plot_group_stratified_network(net_comp, net_strat.group_a_net, net_strat.group_b_net)
+if nv(net_strat["A"].net.graph) > 0 && nv(net_strat["B"].net.graph) > 0
+    net_comp = compare_networks(net_strat["A"].net, net_strat["B"].net,
+                                 net_strat["A"].communities, net_strat["B"].communities)
+    plot_group_stratified_network(net_comp, net_strat["A"].net, net_strat["B"].net)
 end
 
 # %% [markdown]
 # ### Side-by-Side Network Comparison
 
 # %%
-if nv(net_strat.group_a_net.graph) > 0 && nv(net_strat.group_b_net.graph) > 0
-    plot_network_comparison(net_strat.group_a_net, net_strat.group_b_net;
-                             group_a_comm=net_strat.group_a_communities,
-                             group_b_comm=net_strat.group_b_communities)
+if nv(net_strat["A"].net.graph) > 0 && nv(net_strat["B"].net.graph) > 0
+    plot_network_comparison(net_strat["A"].net, net_strat["B"].net;
+                             group_a_comm=net_strat["A"].communities,
+                             group_b_comm=net_strat["B"].communities)
 end
 
 # %% [markdown]
 # ### Centrality Comparison
 
 # %%
-if nv(net_strat.group_a_net.graph) > 0 && nv(net_strat.group_b_net.graph) > 0
-    group_a_metrics = compute_network_metrics(net_strat.group_a_net)
-    group_b_metrics = compute_network_metrics(net_strat.group_b_net)
+if nv(net_strat["A"].net.graph) > 0 && nv(net_strat["B"].net.graph) > 0
+    group_a_metrics = compute_network_metrics(net_strat["A"].net)
+    group_b_metrics = compute_network_metrics(net_strat["B"].net)
     plot_centrality_comparison(group_a_metrics, group_b_metrics)
 end
 
@@ -189,6 +189,6 @@ plot_class_profiles(clustering)
 
 # %%
 clust_strat = stratified_bernoulli_clustering(event_df; K_range=2:6, n_init=5)
-plot_clustering_comparison(clust_strat.group_a_result, clust_strat.group_b_result)
+plot_clustering_comparison(clust_strat["A"], clust_strat["B"])
 
 # %%

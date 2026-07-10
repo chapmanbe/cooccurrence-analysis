@@ -2,7 +2,7 @@
 
 julia_version = "1.12.4"
 manifest_format = "2.0"
-project_hash = "0131a7b0b687e26f55e2c61282c16ce6f313b43d"
+project_hash = "5fd59894d229a010ef9c104783c9322602b16dc5"
 
 [[deps.ADTypes]]
 git-tree-sha1 = "bbc22a9a08a0ef6460041086d8a7b27940ed4ffd"
@@ -362,12 +362,6 @@ git-tree-sha1 = "a21c5464519504e41e0cbc91f0188e8ca23d7440"
 uuid = "83423d85-b0ee-5818-9007-b63ccbeb887a"
 version = "1.18.5+1"
 
-[[deps.CancerAssociationRules]]
-deps = ["Arrow", "CSV", "CairoMakie", "CategoricalArrays", "DataFrames", "Distributions", "GraphMakie", "Graphs", "HypothesisTests", "InlineStrings", "LinearAlgebra", "MCMCChains", "MultipleTesting", "NetworkLayout", "Printf", "Random", "ReverseDiff", "Revise", "RuleMiner", "SimpleWeightedGraphs", "SpecialFunctions", "StatsBase", "Test", "Turing"]
-path = "."
-uuid = "9f9098d1-fcf9-4b41-b4c6-5cb1e3ce067f"
-version = "0.0.0"
-
 [[deps.CategoricalArrays]]
 deps = ["Compat", "DataAPI", "Future", "Missings", "Printf", "Requires", "Statistics", "Unicode"]
 git-tree-sha1 = "a6f644eb7bbc0171286f0f3ad1ffde8f04be7b83"
@@ -561,6 +555,12 @@ weakdeps = ["IntervalSets", "LinearAlgebra", "StaticArrays"]
 git-tree-sha1 = "439e35b0b36e2e5881738abc8857bd92ad6ff9a8"
 uuid = "d38c429a-6771-53c6-b99e-75d170b6e991"
 version = "0.6.3"
+
+[[deps.CooccurrenceAnalysis]]
+deps = ["Arrow", "CSV", "CairoMakie", "CategoricalArrays", "DataFrames", "Distributions", "GraphMakie", "Graphs", "HypothesisTests", "InlineStrings", "LinearAlgebra", "MCMCChains", "MultipleTesting", "NetworkLayout", "OrderedCollections", "Printf", "Random", "ReverseDiff", "Revise", "RuleMiner", "SimpleWeightedGraphs", "SpecialFunctions", "StatsBase", "Test", "Turing"]
+path = "."
+uuid = "02d9ee0a-1975-417e-bb5d-e9a98e82c5c6"
+version = "0.0.0"
 
 [[deps.Crayons]]
 git-tree-sha1 = "249fe38abf76d48563e2f4556bebd215aa317e15"

@@ -64,22 +64,14 @@ Returns a DataFrame with columns: `item_a`, `item_b`, `observed`, `expected`,
 `lift`, `phi`, `odds_ratio`, `p_value`, `p_adjusted`, `n_a`, `n_b`.
 """
 function compute_pairwise_associations(event_df::DataFrame;
-                                        group_filter::Union{AbstractString, Nothing}=nothing,
+                                        group_filter=nothing,
                                         test::Symbol=:fisher,
                                         correction::Symbol=:bh,
                                         timing_filter::Symbol=:all,
-                                        concurrent_window::Int=0)
-    df = event_df
-
-    # Apply group filter
-    if group_filter !== nothing
-        df = filter(row -> row.Group == group_filter, df)
-    end
-    if group_filter == "A"
-        df = filter(row -> !(row.item in GROUP_B_ONLY_ITEMS), df)
-    elseif group_filter == "B"
-        df = filter(row -> !(row.item in GROUP_A_ONLY_ITEMS), df)
-    end
+                                        concurrent_window::Int=0,
+                                        exclusive_items::Union{Nothing, AbstractDict}=nothing)
+    # Filter to the requested group and drop other groups' exclusive items
+    df = _filter_group(event_df, group_filter, exclusive_items)
 
     # Apply timing filter (no-op when timing_filter == :all)
     df = filter_event_by_timing(df; timing_filter, concurrent_window)
@@ -174,7 +166,9 @@ Build a weighted co-occurrence network from event data.
 - `weight_metric`: Edge weight metric — `:lift` (default) or `:phi`
 - `min_count`: Minimum co-occurrence count to include an edge
 - `alpha`: Significance threshold for adjusted p-values
-- `group_filter`: `"A"` or `"B"` for group-specific networks
+- `group_filter`: a group value to build a group-specific network (or `nothing`)
+- `exclusive_items`: optional `Dict(group_value => Set(items))`; when
+  `group_filter` is set, items exclusive to OTHER groups are dropped
 - `timing_filter`: `:all` / `:concurrent` / `:sequential`. With non-`:all`
   values, restricts to multi-item records matching the timing criterion;
   see `filter_event_by_timing`.
@@ -188,14 +182,15 @@ function build_cooccurrence_network(event_df::DataFrame;
                                      weight_metric::Symbol=:lift,
                                      min_count::Int=30,
                                      alpha::Float64=0.05,
-                                     group_filter::Union{AbstractString, Nothing}=nothing,
+                                     group_filter=nothing,
                                      test::Symbol=:fisher,
                                      correction::Symbol=:bh,
                                      timing_filter::Symbol=:all,
-                                     concurrent_window::Int=0)
+                                     concurrent_window::Int=0,
+                                     exclusive_items::Union{Nothing, AbstractDict}=nothing)
     # Compute all pairwise associations
     edge_data = compute_pairwise_associations(event_df;
-        group_filter, test, correction, timing_filter, concurrent_window)
+        group_filter, test, correction, timing_filter, concurrent_window, exclusive_items)
 
     # Filter edges
     significant = filter(row ->
@@ -208,15 +203,7 @@ function build_cooccurrence_network(event_df::DataFrame;
     items_in_edges = unique(vcat(significant.item_a, significant.item_b))
 
     # Also include all items from the population for complete vertex set
-    df = event_df
-    if group_filter !== nothing
-        df = filter(row -> row.Group == group_filter, df)
-    end
-    if group_filter == "A"
-        df = filter(row -> !(row.item in GROUP_B_ONLY_ITEMS), df)
-    elseif group_filter == "B"
-        df = filter(row -> !(row.item in GROUP_A_ONLY_ITEMS), df)
-    end
+    df = _filter_group(event_df, group_filter, exclusive_items)
     df = filter_event_by_timing(df; timing_filter, concurrent_window)
 
     # Use only items that appear in edges (isolated nodes provide no info)

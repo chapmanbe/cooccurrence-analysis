@@ -94,30 +94,32 @@ association, with group_a and group_b values side by side.
 """
 function plot_arm_comparison(comparison::DataFrame;
                               metric::Symbol=:lift,
+                              labels=("A", "B"),
                               top_n::Int=15,
                               figsize::Tuple{Int,Int}=(900, 600))
     nrow(comparison) == 0 && error("Cannot plot empty comparison DataFrame")
 
-    group_a_col = Symbol("group_a_$metric")
-    group_b_col = Symbol("group_b_$metric")
+    lx, ly = string(labels[1]), string(labels[2])
+    group_a_col = Symbol("group_$(lowercase(lx))_$metric")
+    group_b_col = Symbol("group_$(lowercase(ly))_$metric")
 
     # Replace missing with 0
     group_a_vals = [ismissing(v) ? 0.0 : Float64(v) for v in comparison[!, group_a_col]]
     group_b_vals = [ismissing(v) ? 0.0 : Float64(v) for v in comparison[!, group_b_col]]
 
-    # Sort by max of group_a/group_b, take top_n
+    # Sort by max of the two groups, take top_n
     max_vals = max.(group_a_vals, group_b_vals)
     order = partialsortperm(max_vals, 1:min(top_n, length(max_vals)), rev=true)
 
     associations = comparison.association[order]
-    m_vals = group_a_vals[order]
-    f_vals = group_b_vals[order]
+    x_vals = group_a_vals[order]
+    y_vals = group_b_vals[order]
     n = length(order)
 
     # Reverse for top-at-top display
     associations = reverse(associations)
-    m_vals = reverse(m_vals)
-    f_vals = reverse(f_vals)
+    x_vals = reverse(x_vals)
+    y_vals = reverse(y_vals)
 
     fig = Figure(size=figsize)
     ax = Axis(fig[1, 1];
@@ -129,12 +131,12 @@ function plot_arm_comparison(comparison::DataFrame;
 
     palette = Makie.wong_colors()
 
-    # Grouped bars: offset group_a up, group_b down
+    # Grouped bars: offset first group up, second group down
     dodge_offset = 0.2
-    barplot!(ax, collect(1:n) .- dodge_offset, m_vals;
-             direction=:x, color=palette[1], width=0.35, label="A")
-    barplot!(ax, collect(1:n) .+ dodge_offset, f_vals;
-             direction=:x, color=palette[2], width=0.35, label="B")
+    barplot!(ax, collect(1:n) .- dodge_offset, x_vals;
+             direction=:x, color=palette[1], width=0.35, label=lx)
+    barplot!(ax, collect(1:n) .+ dodge_offset, y_vals;
+             direction=:x, color=palette[2], width=0.35, label=ly)
 
     # Mark missing values with a small marker
     for (i, idx) in enumerate(reverse(order))

@@ -9,6 +9,7 @@ item associations.
 module CooccurrenceAnalysis
 
 using DataFrames, StatsBase
+using OrderedCollections: OrderedDict
 import Arrow
 using RuleMiner
 using HypothesisTests, MultipleTesting
@@ -24,10 +25,9 @@ export load_event_data, get_record_summary, build_transactions, build_transactio
        mine_frequent_itemsets, mine_association_rules,
        build_contingency_table, odds_ratio, test_association, validate_rules,
        adjust_pvalues,
-       stratified_analysis, compare_strata,
+       stratify_by, stratified_analysis, compare_strata,
        run_full_pipeline,
        format_itemset, significance_stars, results_summary,
-       GROUP_A_ONLY_ITEMS, GROUP_B_ONLY_ITEMS,
        plot_arm_scatter, plot_arm_comparison, plot_arm_matrix
 
 # Network analysis exports
@@ -128,7 +128,8 @@ function run_full_pipeline(data_path::String;
                            correction::Symbol=:bh,
                            stratify_by_group::Bool=true,
                            timing_filter::Symbol=:all,
-                           concurrent_window::Int=0)
+                           concurrent_window::Int=0,
+                           exclusive_items::Union{Nothing, AbstractDict}=nothing)
     println("Loading data from $data_path...")
     event_df = load_event_data(data_path)
     n_total = length(unique(event_df.id))
@@ -165,18 +166,21 @@ function run_full_pipeline(data_path::String;
         println("\n═══ Group-Stratified Analysis ═══")
         strat = stratified_analysis(event_df;
             min_support, min_confidence, min_count, max_length, test, correction,
-            timing_filter, concurrent_window)
+            timing_filter, concurrent_window, exclusive_items)
         result[:stratified] = strat
 
-        if nrow(strat.group_a_rules) > 0 && nrow(strat.group_b_rules) > 0
-            println("\n═══ Cross-Strata Comparison ═══")
-            comp = compare_strata(strat.group_a_rules, strat.group_b_rules)
-            n_universal = count(comp.category .== :universal)
-            n_group_a = count(comp.category .== :group_a_only)
-            n_group_b = count(comp.category .== :group_b_only)
-            n_group_spec = count(comp.category .== :group_specific_item)
-            println("  Universal: $n_universal | Group A-only: $n_group_a | Group B-only: $n_group_b | Group-specific: $n_group_spec")
-            result[:comparison] = comp
+        # Pairwise cross-strata comparison over every group pair that has rules.
+        labels = collect(keys(strat))
+        comparisons = OrderedDict{String, DataFrame}()
+        for i in 1:length(labels), j in (i+1):length(labels)
+            lx, ly = labels[i], labels[j]
+            (nrow(strat[lx].rules) > 0 && nrow(strat[ly].rules) > 0) || continue
+            comparisons["$(lx)_vs_$(ly)"] = compare_strata(strat[lx].rules, strat[ly].rules;
+                labels=(lx, ly), exclusive_items)
+        end
+        if !isempty(comparisons)
+            println("\n═══ Cross-Strata Comparison ($(length(comparisons)) pair(s)) ═══")
+            result[:comparison] = comparisons
         end
     end
 
@@ -219,7 +223,8 @@ function run_network_pipeline(data_path::String;
                                community_method::Symbol=:louvain,
                                stratify_by_group::Bool=true,
                                timing_filter::Symbol=:all,
-                               concurrent_window::Int=0)
+                               concurrent_window::Int=0,
+                               exclusive_items::Union{Nothing, AbstractDict}=nothing)
     println("Loading data from $data_path...")
     event_df = load_event_data(data_path)
     n_total = length(unique(event_df.id))
@@ -244,20 +249,21 @@ function run_network_pipeline(data_path::String;
         println("\n═══ Group-Stratified Networks ═══")
         strat = stratified_network_analysis(event_df;
             weight_metric, min_count, alpha, test, correction,
-            community_method, timing_filter, concurrent_window)
+            community_method, timing_filter, concurrent_window, exclusive_items)
         result[:stratified] = strat
 
-        if nv(strat.group_a_net.graph) > 0 && nv(strat.group_b_net.graph) > 0
-            println("\n═══ Network Comparison ═══")
-            comp = compare_networks(strat.group_a_net, strat.group_b_net,
-                                    strat.group_a_communities, strat.group_b_communities)
-            println("  Shared edges: $(nrow(comp.shared_edges))")
-            println("  Group A-only edges: $(nrow(comp.group_a_only_edges))")
-            println("  Group B-only edges: $(nrow(comp.group_b_only_edges))")
-            ari_str = ismissing(comp.community_ari) ? "n/a (<2 shared items)" :
-                      string(round(comp.community_ari, digits=4))
-            println("  Community ARI: $ari_str")
-            result[:comparison] = comp
+        # Pairwise network comparison over every group pair with non-empty graphs.
+        labels = collect(keys(strat))
+        comparisons = OrderedDict{String, NetworkComparisonResult}()
+        for i in 1:length(labels), j in (i+1):length(labels)
+            lx, ly = labels[i], labels[j]
+            (nv(strat[lx].net.graph) > 0 && nv(strat[ly].net.graph) > 0) || continue
+            comparisons["$(lx)_vs_$(ly)"] = compare_networks(
+                strat[lx].net, strat[ly].net, strat[lx].communities, strat[ly].communities)
+        end
+        if !isempty(comparisons)
+            println("\n═══ Network Comparison ($(length(comparisons)) pair(s)) ═══")
+            result[:comparison] = comparisons
         end
     end
 
@@ -300,7 +306,8 @@ function run_clustering_pipeline(data_path::String;
                                   floor::Float64=1.0,
                                   dirichlet_prior::Float64=1.0,
                                   n_init::Int=5,
-                                  stratify_by_group::Bool=true)
+                                  stratify_by_group::Bool=true,
+                                  exclusive_items::Union{Nothing, AbstractDict}=nothing)
     println("Loading data from $data_path...")
     event_df = load_event_data(data_path)
     n_total = length(unique(event_df.id))
@@ -318,14 +325,20 @@ function run_clustering_pipeline(data_path::String;
         println("\n═══ Group-Stratified Bayesian Clustering ═══")
         strat = stratified_bernoulli_clustering(event_df;
             K_range, min_items, prior, alpha_prior, beta_prior,
-            concentration, floor, dirichlet_prior, n_init)
+            concentration, floor, dirichlet_prior, n_init, exclusive_items)
         result[:stratified] = strat
 
-        println("\n═══ Clustering Comparison ═══")
-        comp = compare_clusterings(strat.group_a_result, strat.group_b_result)
-        println("  Shared high-prob items: $(nrow(comp.shared_high_prob_items))")
-        println("  Group-specific cluster signatures: $(nrow(comp.group_specific_clusters))")
-        result[:comparison] = comp
+        # Pairwise clustering comparison over every group pair.
+        labels = collect(keys(strat))
+        comparisons = OrderedDict{String, ClusteringComparisonResult}()
+        for i in 1:length(labels), j in (i+1):length(labels)
+            lx, ly = labels[i], labels[j]
+            comparisons["$(lx)_vs_$(ly)"] = compare_clusterings(strat[lx], strat[ly])
+        end
+        if !isempty(comparisons)
+            println("\n═══ Clustering Comparison ($(length(comparisons)) pair(s)) ═══")
+            result[:comparison] = comparisons
+        end
     end
 
     return NamedTuple(result)

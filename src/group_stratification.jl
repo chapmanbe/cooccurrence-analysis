@@ -3,21 +3,63 @@
 # ──────────────────────────────────────────────────────────────────────────────
 
 """
-    stratified_analysis(event_df::DataFrame;
-                        min_support::Float64=0.005,
-                        min_confidence::Float64=0.1,
-                        min_count::Union{Int, Nothing}=30,
-                        max_length::Int=4,
-                        test::Symbol=:fisher,
-                        correction::Symbol=:bh) -> NamedTuple
+    stratify_by(analysis_fn, event_df::DataFrame;
+                group_col::Symbol=:Group, verbose::Bool=true, kwargs...)
+        -> OrderedDict{String, Any}
 
-Run the association rule mining pipeline separately for group_a and group_b cohorts.
+Generic per-group stratification driver. Runs `analysis_fn` once for every group
+value in `sort(unique(event_df[!, group_col]))`, calling
+`analysis_fn(event_df; group_filter=g, kwargs...)`, and returns the results keyed
+by the string form of each group value.
 
-# Returns
-NamedTuple with fields:
-- `group_a_rules`, `group_b_rules`: Validated rule DataFrames
-- `group_a_itemsets`, `group_b_itemsets`: Frequent itemset DataFrames
-- `group_a_n_records`, `group_b_n_records`: Multi-item record counts per group
+This is the single driver behind the per-group ARM, network, and flat-K
+clustering stratifications. Keying results by group value in a Dict — rather than
+splicing values into Symbol field names — removes the old two-group ceiling and
+the lowercase-collision problem, and makes N groups work with no code change.
+"""
+function stratify_by(analysis_fn, event_df::DataFrame;
+                     group_col::Symbol=:Group, verbose::Bool=true, kwargs...)
+    groups = sort(unique(event_df[!, group_col]))
+    out = OrderedDict{String, Any}()
+    for g in groups
+        verbose && println("── stratum $(g) ──")
+        out[string(g)] = analysis_fn(event_df; group_filter=g, kwargs...)
+    end
+    return out
+end
+
+# One ARM stratum: mine + validate rules for a single group.
+function _arm_stratum(event_df::DataFrame; group_filter,
+                      min_support::Float64, min_confidence::Float64,
+                      min_count::Union{Int, Nothing}, max_length::Int,
+                      test::Symbol, correction::Symbol,
+                      timing_filter::Symbol, concurrent_window::Int,
+                      exclusive_items::Union{Nothing, AbstractDict})
+    txns_df = build_transactions(event_df; group_filter, min_items=2,
+                                 timing_filter, concurrent_window, exclusive_items)
+    n_records = nrow(txns_df)
+    n_records == 0 && return (rules=DataFrame(), itemsets=DataFrame(), n_records=0)
+
+    itemsets = mine_frequent_itemsets(txns_df; min_support, min_count, max_length)
+    rules = mine_association_rules(txns_df; min_support, min_confidence, min_count, max_length)
+
+    # Validate against the same group-filtered event data
+    group_event_df = _filter_group(event_df, group_filter, exclusive_items)
+    if nrow(rules) > 0
+        rules = validate_rules(rules, group_event_df; test, correction)
+    end
+    return (rules=rules, itemsets=itemsets, n_records=n_records)
+end
+
+"""
+    stratified_analysis(event_df::DataFrame; kwargs...) -> OrderedDict{String, Any}
+
+Run the association-rule-mining pipeline separately for every group value, via
+[`stratify_by`](@ref). Returns an `OrderedDict` keyed by group value; each entry
+is a NamedTuple `(rules, itemsets, n_records)`. Access as `strat["A"].rules`.
+
+Pass `exclusive_items = Dict(group => Set(items))` to drop each group's exclusive
+items from the other groups' cohorts (domain knowledge supplied by the caller).
 """
 function stratified_analysis(event_df::DataFrame;
                              min_support::Float64=0.005,
@@ -27,59 +69,12 @@ function stratified_analysis(event_df::DataFrame;
                              test::Symbol=:fisher,
                              correction::Symbol=:bh,
                              timing_filter::Symbol=:all,
-                             concurrent_window::Int=0)
-    results = Dict{String, Any}()
-
-    for group in ["A", "B"]
-        println("── Analyzing $group cohort ──")
-
-        # Build group-filtered transactions
-        txns_df = build_transactions(event_df; group_filter=group, min_items=2,
-                                      timing_filter, concurrent_window)
-        n_records = nrow(txns_df)
-        println("  Multi-item records: $n_records")
-
-        if n_records == 0
-            results["group_$(lowercase(group))_rules"] = DataFrame()
-            results["group_$(lowercase(group))_itemsets"] = DataFrame()
-            results["group_$(lowercase(group))_n_records"] = 0
-            continue
-        end
-
-        # Mine itemsets and rules
-        itemsets = mine_frequent_itemsets(txns_df;
-            min_support, min_count, max_length)
-        rules = mine_association_rules(txns_df;
-            min_support, min_confidence, min_count, max_length)
-        println("  Frequent itemsets: $(nrow(itemsets)), Rules: $(nrow(rules))")
-
-        # Filter to group-appropriate event data for validation
-        group_event_df = filter(row -> row.Group == group, event_df)
-        if group == "A"
-            group_event_df = filter(row -> !(row.item in GROUP_B_ONLY_ITEMS), group_event_df)
-        else
-            group_event_df = filter(row -> !(row.item in GROUP_A_ONLY_ITEMS), group_event_df)
-        end
-
-        # Validate with statistical tests
-        if nrow(rules) > 0
-            rules = validate_rules(rules, group_event_df; test, correction)
-            sig_count = count(rules.significant)
-            println("  Significant rules (after $correction correction): $sig_count")
-        end
-
-        prefix = "group_" * lowercase(group)
-        results["$(prefix)_rules"] = rules
-        results["$(prefix)_itemsets"] = itemsets
-        results["$(prefix)_n_records"] = n_records
-    end
-
-    return (group_a_rules=results["group_a_rules"],
-            group_b_rules=results["group_b_rules"],
-            group_a_itemsets=results["group_a_itemsets"],
-            group_b_itemsets=results["group_b_itemsets"],
-            group_a_n_records=results["group_a_n_records"],
-            group_b_n_records=results["group_b_n_records"])
+                             concurrent_window::Int=0,
+                             exclusive_items::Union{Nothing, AbstractDict}=nothing,
+                             verbose::Bool=true)
+    return stratify_by(_arm_stratum, event_df; verbose,
+        min_support, min_confidence, min_count, max_length,
+        test, correction, timing_filter, concurrent_window, exclusive_items)
 end
 
 """
@@ -97,118 +92,102 @@ function _normalize_rule_key(lhs, rhs)
     return join(lhs_sorted, " + ") * " => " * string(rhs)
 end
 
-"""
-    compare_strata(group_a_rules::DataFrame, group_b_rules::DataFrame) -> DataFrame
-
-Compare rules found in group_a vs group_b cohorts. Categorizes each discovered
-association as `:universal`, `:group_a_only`, `:group_b_only`, or
-`:group_specific_item`.
-
-# Returns
-DataFrame with columns for both group_a and group_b metrics plus a `category` column.
-"""
-function compare_strata(group_a_rules::DataFrame, group_b_rules::DataFrame)
-    # Build lookup by canonical key
-    group_a_keys = Dict{String, DataFrameRow}()
-    for row in eachrow(group_a_rules)
+# Lookup from canonical rule key to the max-lift rule row.
+function _rule_lookup(rules::DataFrame)
+    d = Dict{String, DataFrameRow}()
+    for row in eachrow(rules)
         key = _normalize_rule_key(row.LHS, row.RHS)
-        # Keep the rule with higher lift if duplicate keys
-        if !haskey(group_a_keys, key) || row.Lift > group_a_keys[key].Lift
-            group_a_keys[key] = row
+        if !haskey(d, key) || row.Lift > d[key].Lift
+            d[key] = row
         end
     end
+    return d
+end
 
-    group_b_keys = Dict{String, DataFrameRow}()
-    for row in eachrow(group_b_rules)
-        key = _normalize_rule_key(row.LHS, row.RHS)
-        if !haskey(group_b_keys, key) || row.Lift > group_b_keys[key].Lift
-            group_b_keys[key] = row
+# Items appearing in a canonical rule key ("X + Y => Z" → ["X","Y","Z"]).
+function _key_items(key::AbstractString)
+    parts = split(key, " => ")
+    lhs = split(parts[1], " + ")
+    return length(parts) > 1 ? vcat(lhs, [parts[2]]) : collect(lhs)
+end
+
+"""
+    compare_strata(rules_x::DataFrame, rules_y::DataFrame;
+                   labels=("A", "B"), exclusive_items=nothing) -> DataFrame
+
+Compare rules from two group cohorts (explicitly pairwise). `labels` names the
+two groups and drives the dynamic column prefixes `group_<label>_*` and the
+category symbols `:group_<label>_only`. Each association is categorized as
+`:universal`, `:group_<label_x>_only`, `:group_<label_y>_only`, or — when
+`exclusive_items` is supplied — `:group_specific_item` if any of its items is
+exclusive to some group.
+
+Returns a DataFrame with `association`, `category`, and per-group
+`support`/`lift`/`N`/`p_adjusted`/`significant` columns.
+"""
+function compare_strata(rules_x::DataFrame, rules_y::DataFrame;
+                        labels=("A", "B"),
+                        exclusive_items::Union{Nothing, AbstractDict}=nothing)
+    px = "group_" * lowercase(string(labels[1]))
+    py = "group_" * lowercase(string(labels[2]))
+
+    keys_x = _rule_lookup(rules_x)
+    keys_y = _rule_lookup(rules_y)
+    all_keys = union(keys(keys_x), keys(keys_y))
+
+    excl = exclusive_items === nothing ? Set{String}() :
+           reduce(union, (Set(String(i) for i in v) for v in values(exclusive_items));
+                  init=Set{String}())
+
+    assoc     = String[]
+    category  = Symbol[]
+    x_support = Union{Missing, Float64}[]; y_support = Union{Missing, Float64}[]
+    x_lift    = Union{Missing, Float64}[]; y_lift    = Union{Missing, Float64}[]
+    x_N       = Union{Missing, Int}[];     y_N       = Union{Missing, Int}[]
+    x_padj    = Union{Missing, Float64}[]; y_padj    = Union{Missing, Float64}[]
+    x_sig     = Union{Missing, Bool}[];    y_sig     = Union{Missing, Bool}[]
+
+    # Fill one group's five metric columns for a given key.
+    function fill_metrics!(sup, lft, nn, padj, sig, lookup, rules_df, key)
+        if haskey(lookup, key)
+            r = lookup[key]
+            push!(sup, r.Support); push!(lft, r.Lift); push!(nn, r.N)
+            if hasproperty(rules_df, :p_adjusted)
+                push!(padj, r.p_adjusted); push!(sig, r.significant)
+            else
+                push!(padj, missing); push!(sig, missing)
+            end
+        else
+            push!(sup, missing); push!(lft, missing); push!(nn, missing)
+            push!(padj, missing); push!(sig, missing)
         end
     end
-
-    all_keys = union(keys(group_a_keys), keys(group_b_keys))
-
-    rows = Dict{String, Vector{Any}}(
-        "association" => String[],
-        "group_a_support" => Union{Missing, Float64}[],
-        "group_a_lift" => Union{Missing, Float64}[],
-        "group_a_N" => Union{Missing, Int}[],
-        "group_a_p_adjusted" => Union{Missing, Float64}[],
-        "group_a_significant" => Union{Missing, Bool}[],
-        "group_b_support" => Union{Missing, Float64}[],
-        "group_b_lift" => Union{Missing, Float64}[],
-        "group_b_N" => Union{Missing, Int}[],
-        "group_b_p_adjusted" => Union{Missing, Float64}[],
-        "group_b_significant" => Union{Missing, Bool}[],
-        "category" => Symbol[]
-    )
 
     for key in sort(collect(all_keys))
-        push!(rows["association"], key)
+        push!(assoc, key)
+        has_x = haskey(keys_x, key)
+        has_y = haskey(keys_y, key)
+        fill_metrics!(x_support, x_lift, x_N, x_padj, x_sig, keys_x, rules_x, key)
+        fill_metrics!(y_support, y_lift, y_N, y_padj, y_sig, keys_y, rules_y, key)
 
-        has_group_a = haskey(group_a_keys, key)
-        has_group_b = haskey(group_b_keys, key)
-
-        # Group A metrics
-        if has_group_a
-            mr = group_a_keys[key]
-            push!(rows["group_a_support"], mr.Support)
-            push!(rows["group_a_lift"], mr.Lift)
-            push!(rows["group_a_N"], mr.N)
-            if hasproperty(group_a_rules, :p_adjusted)
-                push!(rows["group_a_p_adjusted"], mr.p_adjusted)
-                push!(rows["group_a_significant"], mr.significant)
-            else
-                push!(rows["group_a_p_adjusted"], missing)
-                push!(rows["group_a_significant"], missing)
-            end
+        is_group_specific = !isempty(excl) && any(s -> String(s) in excl, _key_items(key))
+        cat = if is_group_specific
+            :group_specific_item
+        elseif has_x && has_y
+            :universal
+        elseif has_x
+            Symbol(px * "_only")
         else
-            push!(rows["group_a_support"], missing)
-            push!(rows["group_a_lift"], missing)
-            push!(rows["group_a_N"], missing)
-            push!(rows["group_a_p_adjusted"], missing)
-            push!(rows["group_a_significant"], missing)
+            Symbol(py * "_only")
         end
-
-        # Group B metrics
-        if has_group_b
-            fr = group_b_keys[key]
-            push!(rows["group_b_support"], fr.Support)
-            push!(rows["group_b_lift"], fr.Lift)
-            push!(rows["group_b_N"], fr.N)
-            if hasproperty(group_b_rules, :p_adjusted)
-                push!(rows["group_b_p_adjusted"], fr.p_adjusted)
-                push!(rows["group_b_significant"], fr.significant)
-            else
-                push!(rows["group_b_p_adjusted"], missing)
-                push!(rows["group_b_significant"], missing)
-            end
-        else
-            push!(rows["group_b_support"], missing)
-            push!(rows["group_b_lift"], missing)
-            push!(rows["group_b_N"], missing)
-            push!(rows["group_b_p_adjusted"], missing)
-            push!(rows["group_b_significant"], missing)
-        end
-
-        # Categorize
-        items = split(key, " + ")
-        is_group_specific = any(s -> s in GROUP_A_ONLY_ITEMS || s in GROUP_B_ONLY_ITEMS, items)
-        if is_group_specific
-            push!(rows["category"], :group_specific_item)
-        elseif has_group_a && has_group_b
-            push!(rows["category"], :universal)
-        elseif has_group_a
-            push!(rows["category"], :group_a_only)
-        else
-            push!(rows["category"], :group_b_only)
-        end
+        push!(category, cat)
     end
 
-    col_order = ["association", "category",
-                 "group_a_support", "group_a_lift", "group_a_N",
-                 "group_a_p_adjusted", "group_a_significant",
-                 "group_b_support", "group_b_lift", "group_b_N",
-                 "group_b_p_adjusted", "group_b_significant"]
-    return DataFrame([col => rows[col] for col in col_order])
+    return DataFrame(
+        "association" => assoc, "category" => category,
+        "$(px)_support" => x_support, "$(px)_lift" => x_lift, "$(px)_N" => x_N,
+        "$(px)_p_adjusted" => x_padj, "$(px)_significant" => x_sig,
+        "$(py)_support" => y_support, "$(py)_lift" => y_lift, "$(py)_N" => y_N,
+        "$(py)_p_adjusted" => y_padj, "$(py)_significant" => y_sig,
+    )
 end

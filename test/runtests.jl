@@ -107,6 +107,13 @@ end
 
 event_df = make_test_event_df()
 
+# Fixture domain knowledge (formerly baked into src/utils.jl as GROUP_*_ONLY_ITEMS):
+# which items are exclusive to which group. Callers supply this via `exclusive_items`.
+# (Plain assignments — `const` is illegal inside the enclosing @testset block.)
+FIXTURE_GROUP_A_ONLY = Set(["GA1", "GA2", "GA3", "GA4"])
+FIXTURE_GROUP_B_ONLY = Set(["GB1", "GB2", "GB3", "GB4", "GB5", "GB6"])
+FIXTURE_EXCLUSIVE = Dict("A" => FIXTURE_GROUP_A_ONLY, "B" => FIXTURE_GROUP_B_ONLY)
+
 @testset "utils" begin
     @test format_itemset(["Item01", "Item02"]) == "Item01 + Item02"
     @test format_itemset(["Item02", "Item01"]) == "Item01 + Item02"  # sorted
@@ -316,20 +323,20 @@ end
         strat = stratified_analysis(event_df;
             min_support=0.1, min_confidence=0.3, min_count=nothing)
 
-        @test strat.group_a_n_records == 6
-        @test strat.group_b_n_records == 14
+        @test strat["A"].n_records == 6
+        @test strat["B"].n_records == 14
 
         # Group A rules should include GA1+Item05
-        if nrow(strat.group_a_rules) > 0
+        if nrow(strat["A"].rules) > 0
             rule_items = [Set(vcat(r.LHS, [r.RHS]))
-                         for r in eachrow(strat.group_a_rules)]
+                         for r in eachrow(strat["A"].rules)]
             @test any(s -> Set(["GA1", "Item05"]) ⊆ s, rule_items)
         end
 
         # Group B rules should include Item01+Item02
-        if nrow(strat.group_b_rules) > 0
+        if nrow(strat["B"].rules) > 0
             rule_items = [Set(vcat(r.LHS, [r.RHS]))
-                         for r in eachrow(strat.group_b_rules)]
+                         for r in eachrow(strat["B"].rules)]
             @test any(s -> Set(["Item01", "Item02"]) ⊆ s, rule_items)
         end
     end
@@ -346,13 +353,29 @@ end
     @testset "compare_strata" begin
         strat = stratified_analysis(event_df;
             min_support=0.05, min_confidence=0.1, min_count=nothing)
+        @test strat isa AbstractDict
 
-        if nrow(strat.group_a_rules) > 0 && nrow(strat.group_b_rules) > 0
-            comp = compare_strata(strat.group_a_rules, strat.group_b_rules)
+        if nrow(strat["A"].rules) > 0 && nrow(strat["B"].rules) > 0
+            comp = compare_strata(strat["A"].rules, strat["B"].rules;
+                                  exclusive_items=FIXTURE_EXCLUSIVE)
             @test "category" in names(comp)
             @test "association" in names(comp)
+            @test "group_a_lift" in names(comp)
+            @test "group_b_lift" in names(comp)
             @test all(comp.category .∈ Ref([:universal, :group_a_only,
                                             :group_b_only, :group_specific_item]))
+        end
+    end
+
+    @testset "compare_strata dynamic labels" begin
+        # Non-default labels must drive both the column prefixes and categories.
+        strat = stratified_analysis(event_df;
+            min_support=0.05, min_confidence=0.1, min_count=nothing)
+        if nrow(strat["A"].rules) > 0 && nrow(strat["B"].rules) > 0
+            comp = compare_strata(strat["A"].rules, strat["B"].rules; labels=("X", "Y"))
+            @test "group_x_lift" in names(comp)
+            @test "group_y_lift" in names(comp)
+            @test all(comp.category .∈ Ref([:universal, :group_x_only, :group_y_only]))
         end
     end
 end
@@ -577,21 +600,23 @@ end
 @testset "network_group_stratification" begin
     @testset "stratified_network_analysis" begin
         strat = stratified_network_analysis(event_df;
-            min_count=1, alpha=1.0)
+            min_count=1, alpha=1.0, exclusive_items=FIXTURE_EXCLUSIVE)
 
-        @test strat.group_a_net isa CooccurrenceNetwork
-        @test strat.group_b_net isa CooccurrenceNetwork
-        @test strat.group_a_communities isa CommunityResult
-        @test strat.group_b_communities isa CommunityResult
+        @test strat isa AbstractDict
+        @test Set(keys(strat)) == Set(["A", "B"])
+        @test strat["A"].net isa CooccurrenceNetwork
+        @test strat["B"].net isa CooccurrenceNetwork
+        @test strat["A"].communities isa CommunityResult
+        @test strat["B"].communities isa CommunityResult
 
         # Group A network should not contain group_b-only items
-        for item in strat.group_a_net.items
-            @test !(item in GROUP_B_ONLY_ITEMS)
+        for item in strat["A"].net.items
+            @test !(item in FIXTURE_GROUP_B_ONLY)
         end
 
         # Group B network should not contain group_a-only items
-        for item in strat.group_b_net.items
-            @test !(item in GROUP_A_ONLY_ITEMS)
+        for item in strat["B"].net.items
+            @test !(item in FIXTURE_GROUP_A_ONLY)
         end
     end
 
@@ -599,9 +624,9 @@ end
         strat = stratified_network_analysis(event_df;
             min_count=1, alpha=1.0)
 
-        if nv(strat.group_a_net.graph) > 0 && nv(strat.group_b_net.graph) > 0
-            comp = compare_networks(strat.group_a_net, strat.group_b_net,
-                                    strat.group_a_communities, strat.group_b_communities)
+        if nv(strat["A"].net.graph) > 0 && nv(strat["B"].net.graph) > 0
+            comp = compare_networks(strat["A"].net, strat["B"].net,
+                                    strat["A"].communities, strat["B"].communities)
             @test comp isa NetworkComparisonResult
             @test comp.shared_edges isa DataFrame
             @test comp.group_a_only_edges isa DataFrame
@@ -937,22 +962,25 @@ end
 
 @testset "stratified_bernoulli_clustering" begin
     strat = stratified_bernoulli_clustering(event_df;
-        K_range=2:3, n_init=2, rng=MersenneTwister(42))
-    @test strat.group_a_result isa CooccurrenceAnalysisResult
-    @test strat.group_b_result isa CooccurrenceAnalysisResult
+        K_range=2:3, n_init=2, rng=MersenneTwister(42),
+        exclusive_items=FIXTURE_EXCLUSIVE)
+    @test strat isa AbstractDict
+    @test Set(keys(strat)) == Set(["A", "B"])
+    @test strat["A"] isa CooccurrenceAnalysisResult
+    @test strat["B"] isa CooccurrenceAnalysisResult
 
-    for item in strat.group_a_result.item_names
-        @test !(item in GROUP_B_ONLY_ITEMS)
+    for item in strat["A"].item_names
+        @test !(item in FIXTURE_GROUP_B_ONLY)
     end
-    for item in strat.group_b_result.item_names
-        @test !(item in GROUP_A_ONLY_ITEMS)
+    for item in strat["B"].item_names
+        @test !(item in FIXTURE_GROUP_A_ONLY)
     end
 end
 
 @testset "compare_clusterings" begin
     strat = stratified_bernoulli_clustering(event_df;
         K_range=2:3, n_init=2, rng=MersenneTwister(42))
-    comp = compare_clusterings(strat.group_a_result, strat.group_b_result)
+    comp = compare_clusterings(strat["A"], strat["B"])
     @test comp isa ClusteringComparisonResult
     @test comp.shared_high_prob_items isa DataFrame
     @test comp.group_specific_clusters isa DataFrame
@@ -989,7 +1017,7 @@ end
     @testset "plot_clustering_comparison" begin
         strat = stratified_bernoulli_clustering(event_df;
             K_range=2:3, n_init=2, rng=MersenneTwister(42))
-        fig = plot_clustering_comparison(strat.group_a_result, strat.group_b_result)
+        fig = plot_clustering_comparison(strat["A"], strat["B"])
         @test fig isa Figure
     end
 end
@@ -1028,8 +1056,8 @@ end
     @testset "plot_arm_comparison" begin
         strat = stratified_analysis(event_df;
             min_support=0.05, min_confidence=0.1, min_count=nothing)
-        if nrow(strat.group_a_rules) > 0 && nrow(strat.group_b_rules) > 0
-            comp = compare_strata(strat.group_a_rules, strat.group_b_rules)
+        if nrow(strat["A"].rules) > 0 && nrow(strat["B"].rules) > 0
+            comp = compare_strata(strat["A"].rules, strat["B"].rules)
             fig = plot_arm_comparison(comp)
             @test fig isa Figure
         end
@@ -1051,18 +1079,18 @@ end
 
     @testset "plot_group_stratified_network" begin
         strat = stratified_network_analysis(event_df; min_count=1, alpha=1.0)
-        if nv(strat.group_a_net.graph) > 0 && nv(strat.group_b_net.graph) > 0
-            comp = compare_networks(strat.group_a_net, strat.group_b_net,
-                                    strat.group_a_communities, strat.group_b_communities)
-            fig = plot_group_stratified_network(comp, strat.group_a_net, strat.group_b_net)
+        if nv(strat["A"].net.graph) > 0 && nv(strat["B"].net.graph) > 0
+            comp = compare_networks(strat["A"].net, strat["B"].net,
+                                    strat["A"].communities, strat["B"].communities)
+            fig = plot_group_stratified_network(comp, strat["A"].net, strat["B"].net)
             @test fig isa Figure
         end
     end
 
     @testset "plot_centrality_comparison" begin
         strat = stratified_network_analysis(event_df; min_count=1, alpha=1.0)
-        group_a_metrics = compute_network_metrics(strat.group_a_net)
-        group_b_metrics = compute_network_metrics(strat.group_b_net)
+        group_a_metrics = compute_network_metrics(strat["A"].net)
+        group_b_metrics = compute_network_metrics(strat["B"].net)
         fig = plot_centrality_comparison(group_a_metrics, group_b_metrics)
         @test fig isa Figure
     end
@@ -1476,6 +1504,90 @@ end
     hdp_inline = hdp_clustering(df_inline;
         group_by=:Group, K_max=3, n_init=1, rng=MersenneTwister(99))
     @test hdp_inline isa HDPClusteringResult
+end
+
+# ──────────────────────────────────────────────────────────────────────────────
+# N-group (3-group) end-to-end: the domain-neutral contract must hold for N > 2
+# ──────────────────────────────────────────────────────────────────────────────
+@testset "three-group end to end (Phase 3)" begin
+    # Groups A/B/C, each with a private item pair plus a shared pair. Includes a
+    # cross-contaminating item (B1 planted into one group-A record) to exercise
+    # exclusive_items.
+    function three_group_df()
+        rows = NamedTuple[]
+        id = 0
+        addrec!(g, items) = begin
+            id += 1
+            for (s, it) in enumerate(items)
+                push!(rows, (id=id, seq=s, Group=g, item=it, year=2010))
+            end
+        end
+        for _ in 1:14; addrec!("A", ["A1", "A2"]); end
+        for _ in 1:14; addrec!("B", ["B1", "B2"]); end
+        for _ in 1:14; addrec!("C", ["C1", "C2"]); end
+        # shared pair across all three groups
+        for g in ("A", "B", "C"), _ in 1:8; addrec!(g, ["S1", "S2"]); end
+        # cross-contamination: a group-A record carrying a B-exclusive item
+        addrec!("A", ["A1", "B1"])
+        return DataFrame(rows)
+    end
+    df3 = three_group_df()
+    excl3 = Dict("A" => Set(["A1", "A2"]), "B" => Set(["B1", "B2"]), "C" => Set(["C1", "C2"]))
+
+    @testset "stratify_by yields one entry per group" begin
+        d = stratify_by(build_transactions, df3; verbose=false, min_items=2)
+        @test d isa AbstractDict
+        @test collect(keys(d)) == ["A", "B", "C"]  # sorted
+    end
+
+    @testset "exclusive_items drops cross-group items" begin
+        # Without exclusive_items, B1 leaks into group A's transactions.
+        a_leak = build_transactions(df3; group_filter="A")
+        @test "B1" in names(a_leak)
+        # With it, B1 (B-exclusive) is dropped from the group-A cohort.
+        a_clean = build_transactions(df3; group_filter="A", exclusive_items=excl3)
+        @test !("B1" in names(a_clean))
+    end
+
+    @testset "ARM stratification over 3 groups" begin
+        strat = stratified_analysis(df3; min_support=0.05, min_confidence=0.1,
+            min_count=nothing, exclusive_items=excl3, verbose=false)
+        @test Set(keys(strat)) == Set(["A", "B", "C"])
+        @test all(g -> strat[g].n_records > 0, ["A", "B", "C"])
+        # A pairwise comparison of any two strata works and is labelled.
+        comp = compare_strata(strat["A"].rules, strat["C"].rules; labels=("A", "C"))
+        @test "group_a_lift" in names(comp)
+        @test "group_c_lift" in names(comp)
+    end
+
+    @testset "network stratification over 3 groups" begin
+        strat = stratified_network_analysis(df3; min_count=1, alpha=1.0,
+            exclusive_items=excl3, verbose=false)
+        @test Set(keys(strat)) == Set(["A", "B", "C"])
+        @test all(g -> strat[g].net isa CooccurrenceNetwork, ["A", "B", "C"])
+        comp = compare_networks(strat["B"].net, strat["C"].net,
+                                strat["B"].communities, strat["C"].communities)
+        @test comp isa NetworkComparisonResult
+    end
+
+    @testset "flat-K clustering stratification over 3 groups" begin
+        strat = stratified_bernoulli_clustering(df3; K_range=2:3, n_init=1,
+            exclusive_items=excl3, verbose=false, rng=MersenneTwister(7))
+        @test Set(keys(strat)) == Set(["A", "B", "C"])
+        @test all(g -> strat[g] isa CooccurrenceAnalysisResult, ["A", "B", "C"])
+    end
+
+    @testset "HDP native 3-group categorization" begin
+        result = hdp_clustering(df3; group_by=:Group, K_max=6, n_init=3,
+            rng=MersenneTwister(2026))
+        @test result.hdp_result.n_groups == 3
+        cats = Set(hdp_cluster_categorization(result).category)
+        # The shared {S1,S2} cluster is universal; the private pairs are single-group.
+        @test :universal in cats
+        @test any(c -> c in (:group_a_only, :group_b_only, :group_c_only), cats)
+        # No buggy prefix-less or uppercase forms.
+        @test !any(c -> occursin("_and_", string(c)) && !startswith(string(c), "group_"), cats)
+    end
 end
 
 # ──────────────────────────────────────────────────────────────────────────────

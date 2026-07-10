@@ -34,9 +34,31 @@ Key functions: `build_cooccurrence_network`, `detect_communities`, `compute_netw
 
 ### Group Stratification (`group_stratification.jl`, `network_group_stratification.jl`)
 
-All methods support group stratification. The HDP handles it natively (joint fit with per-group weights). ARM and network methods run separately per group with cross-stratum comparison.
+All methods support group stratification over **any number of groups**. The HDP handles it natively (joint fit with per-group weights). ARM, network, and flat-K clustering run separately per group via the generic `stratify_by` driver, then compare strata **pairwise**.
 
-Key functions: `stratified_analysis`, `compare_strata`, `stratified_network_analysis`, `compare_networks`, `stratified_bernoulli_clustering`, `compare_clusterings`
+`stratify_by(analysis_fn, event_df; group_col=:Group, kwargs...)` iterates `sort(unique(event_df[!, group_col]))` and returns an `OrderedDict` keyed by group value. Each stratified function returns such a dict:
+
+- `stratified_analysis(event_df)["A"]` → `(rules, itemsets, n_records)`
+- `stratified_network_analysis(event_df)["A"]` → `(net, communities, metrics)`
+- `stratified_bernoulli_clustering(event_df)["A"]` → `CooccurrenceAnalysisResult`
+
+Key functions: `stratify_by`, `stratified_analysis`, `compare_strata`, `stratified_network_analysis`, `compare_networks`, `stratified_bernoulli_clustering`, `compare_clusterings`
+
+**Domain knowledge stays with the caller.** Items exclusive to a group are not baked into the package. Pass `exclusive_items = Dict("A" => Set(["GA1", ...]), "B" => Set([...]))` to `build_transactions` / `compute_pairwise_associations` / `build_cooccurrence_network` (and the stratified/pipeline functions that wrap them). When filtering to a group, items exclusive to *other* groups are dropped.
+
+#### Migration from the two-group API (breaking change)
+
+The per-group ARM/network/flat-K results are now keyed by group value in a dict instead of spliced into `NamedTuple` field names, which removes the old two-group ceiling:
+
+| Old (≤ v0.1) | New |
+|--------------|-----|
+| `strat.group_a_rules` | `strat["A"].rules` |
+| `strat.group_b_n_records` | `strat["B"].n_records` |
+| `strat.group_a_net` / `.group_a_communities` | `strat["A"].net` / `strat["A"].communities` |
+| `strat.group_a_result` | `strat["A"]` |
+| `GROUP_A_ONLY_ITEMS` / `GROUP_B_ONLY_ITEMS` (exported) | caller-supplied `exclusive_items` keyword |
+
+`compare_strata(rules_x, rules_y; labels=("A","B"))` now takes two dict entries and derives its column prefixes and category symbols from `labels`. Comparisons remain explicitly pairwise; the pipelines compare every group pair.
 
 ## Visualization
 

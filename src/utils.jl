@@ -1,15 +1,10 @@
 # ──────────────────────────────────────────────────────────────────────────────
-# Constants and helper functions
+# Helper functions
 # ──────────────────────────────────────────────────────────────────────────────
-
-"Items that occur only in group A"
-const GROUP_A_ONLY_ITEMS = Set(["GA1", "GA2", "GA3", "GA4"])
-
-"Items that occur only in group B"
-const GROUP_B_ONLY_ITEMS = Set([
-    "GB1", "GB2", "GB3",
-    "GB4", "GB5", "GB6"
-])
+#
+# Domain knowledge (which items are exclusive to which group) is NOT baked into
+# package source. Callers supply it via the `exclusive_items` keyword — see
+# `build_transactions` / `compute_pairwise_associations` / `_filter_group`.
 
 """
     format_itemset(items) -> String

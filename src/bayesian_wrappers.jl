@@ -77,10 +77,11 @@ calibrated from marginal item-item frequencies, controlled by `concentration`
 and `floor`.
 """
 function bernoulli_clustering(event_df::DataFrame;
-                                      group_filter::Union{AbstractString, Nothing}=nothing,
+                                      group_filter=nothing,
                                       min_items::Int=2,
                                       timing_filter::Symbol=:all,
                                       concurrent_window::Int=0,
+                                      exclusive_items::Union{Nothing, AbstractDict}=nothing,
                                       K_range::UnitRange{Int}=2:8,
                                       prior::Symbol=:flat,
                                       alpha_prior::Float64=1.0,
@@ -94,7 +95,7 @@ function bernoulli_clustering(event_df::DataFrame;
                                       rng::AbstractRNG=Random.GLOBAL_RNG)
     # Build transactions and convert to matrix; ids stay row-aligned with X
     txns_df, multi_ids = build_transactions_with_ids(event_df;
-        group_filter, min_items, timing_filter, concurrent_window)
+        group_filter, min_items, timing_filter, concurrent_window, exclusive_items)
     X, item_names = transactions_to_matrix(txns_df)
     N = size(X, 1)
     N == 0 && error("No records with ≥$min_items items after filtering")
@@ -129,27 +130,19 @@ function bernoulli_clustering(event_df::DataFrame;
 end
 
 """
-    stratified_bernoulli_clustering(event_df::DataFrame;
-                                     K_range=2:8, kwargs...) -> NamedTuple
+    stratified_bernoulli_clustering(event_df::DataFrame; kwargs...)
+        -> OrderedDict{String, Any}
 
-Run Bayesian clustering separately for group_a and group_b cohorts.
-
-Returns NamedTuple with `group_a_result` and `group_b_result`.
+Run Bayesian clustering separately for every group value, via [`stratify_by`](@ref).
+Returns an `OrderedDict` keyed by group value, each entry a
+`CooccurrenceAnalysisResult`. Access as `strat["A"]`.
 """
 function stratified_bernoulli_clustering(event_df::DataFrame;
-                                          K_range::UnitRange{Int}=2:8,
+                                          verbose::Bool=true,
                                           kwargs...)
-    results = Dict{Symbol, CooccurrenceAnalysisResult}()
-    for group in ["A", "B"]
-        prefix = Symbol("group_", lowercase(group), :_result)
-        println("── Bayesian clustering: $group cohort ──")
-        result = bernoulli_clustering(event_df;
-            group_filter=group, K_range, kwargs...)
-        println("  Records: $(result.n_records), Best K: $(result.model_selection.best_K)")
-        results[prefix] = result
-    end
-    return (group_a_result=results[:group_a_result],
-            group_b_result=results[:group_b_result])
+    # bernoulli_clustering already accepts group_filter + all clustering kwargs,
+    # so it is the per-stratum analysis function directly.
+    return stratify_by(bernoulli_clustering, event_df; verbose, kwargs...)
 end
 
 """
@@ -163,12 +156,12 @@ high class probability in both groups vs items that define group-specific cluste
 function compare_clusterings(group_a::CooccurrenceAnalysisResult,
                               group_b::CooccurrenceAnalysisResult;
                               prob_threshold::Float64=0.3)
-    best_m = group_a.model_selection.best
-    best_f = group_b.model_selection.best
+    best_a = group_a.model_selection.best
+    best_b = group_b.model_selection.best
 
     # Find high-probability items per class for each group
-    group_a_high = _high_prob_items(best_m.theta, group_a.item_names, prob_threshold)
-    group_b_high = _high_prob_items(best_f.theta, group_b.item_names, prob_threshold)
+    group_a_high = _high_prob_items(best_a.theta, group_a.item_names, prob_threshold)
+    group_b_high = _high_prob_items(best_b.theta, group_b.item_names, prob_threshold)
 
     # Shared: items that appear as high-prob in at least one class in both groups
     group_a_item_set = Set(vcat(group_a_high...))
@@ -177,10 +170,10 @@ function compare_clusterings(group_a::CooccurrenceAnalysisResult,
 
     shared_rows = NamedTuple[]
     for item in sort(collect(shared_items))
-        m_max = _max_theta_for_item(best_m.theta, group_a.item_names, item)
-        f_max = _max_theta_for_item(best_f.theta, group_b.item_names, item)
-        push!(shared_rows, (item=item, group_a_max_prob=round(m_max, digits=4),
-                            group_b_max_prob=round(f_max, digits=4)))
+        a_max = _max_theta_for_item(best_a.theta, group_a.item_names, item)
+        b_max = _max_theta_for_item(best_b.theta, group_b.item_names, item)
+        push!(shared_rows, (item=item, group_a_max_prob=round(a_max, digits=4),
+                            group_b_max_prob=round(b_max, digits=4)))
     end
     shared_df = isempty(shared_rows) ?
         DataFrame(item=String[], group_a_max_prob=Float64[], group_b_max_prob=Float64[]) :
