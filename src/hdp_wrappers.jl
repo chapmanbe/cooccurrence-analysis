@@ -12,7 +12,7 @@ Item-domain wrapper around HDPBernoulliResult.
 - `item_names`: Item names matching columns of the data matrix
 - `class_profiles`: DataFrame — K_max rows × (2 + D): cluster, beta_weight, per-item θ
 - `group_profiles`: DataFrame — K_max rows × (1 + n_groups): cluster, per-group π
-- `record_assignments`: DataFrame with id, group_label, assignment, max_responsibility
+- `record_assignments`: DataFrame with id, group, assignment, max_responsibility
 - `n_records_per_group`: Number of records in each group
 """
 struct HDPClusteringResult

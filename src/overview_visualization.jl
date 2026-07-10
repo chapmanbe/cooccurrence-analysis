@@ -300,8 +300,8 @@ records for marginal counts).
 
 `group` filters to `:group_b`, `:group_a`, or `:both` (default).
 
-Items are ordered by anatomical grouping (if a standard tabular grouping is
-available), otherwise by hierarchical clustering of the phi matrix. Cells with
+Items are ordered by greedy nearest-neighbour seriation of the phi matrix
+(a cosmetic ordering that places correlated items adjacent). Cells with
 |φ| > 0.02 are annotated with the rounded value.
 """
 function plot_cooccurrence_heatmap(event_df::DataFrame;
@@ -348,7 +348,7 @@ function plot_cooccurrence_heatmap(event_df::DataFrame;
         phi[j, i] = phi[i, j]
     end
 
-    # Sort items by hierarchical clustering (average-linkage on distance = 1 - |phi|)
+    # Order items by greedy nearest-neighbour seriation on distance = 1 - |phi|
     dist = 1.0 .- abs.(phi)
     order = _hclust_order(dist)
     sorted_items = items[order]
@@ -386,14 +386,23 @@ function plot_cooccurrence_heatmap(event_df::DataFrame;
 end
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Internal: greedy hierarchical clustering order (average linkage)
+# Internal: greedy nearest-neighbour seriation order
 # ──────────────────────────────────────────────────────────────────────────────
 
+"""
+    _hclust_order(dist::Matrix{Float64}) -> Vector{Int}
+
+Greedy nearest-neighbour seriation: starting from item 1, repeatedly append the
+nearest not-yet-placed item under `dist`. This is a cheap chain heuristic for a
+visually coherent ordering — NOT true (average-linkage) hierarchical clustering,
+despite what earlier comments claimed. The ordering is cosmetic (heatmap row/col
+layout only), so the approximation is acceptable.
+"""
 function _hclust_order(dist::Matrix{Float64})
     n = size(dist, 1)
     n <= 2 && return collect(1:n)
 
-    # Nearest-neighbour chain → approximate leaf order via greedy seriation
+    # Greedy nearest-neighbour chain over the distance matrix
     remaining = collect(1:n)
     order = Int[]
     push!(order, popfirst!(remaining))
