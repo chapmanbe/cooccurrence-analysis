@@ -382,7 +382,8 @@ function _run_hdp_cavi(X::AbstractMatrix{Bool},
                        beta_prior::Vector{Float64},
                        max_iter::Int,
                        tol::Float64,
-                       rng::AbstractRNG)
+                       rng::AbstractRNG;
+                       effective_K_threshold::Float64=0.95)
 
     N, D = size(X)
 
@@ -457,7 +458,7 @@ function _run_hdp_cavi(X::AbstractMatrix{Bool},
 
     assignments = [ci[2] for ci in vec(argmax(R, dims=2))]
     theta = theta_alpha ./ (theta_alpha .+ theta_beta)
-    eff_K = _effective_K(beta_mean)
+    eff_K = _effective_K(beta_mean; threshold=effective_K_threshold)
 
     return HDPBernoulliResult(
         K_max, n_groups,
@@ -512,6 +513,7 @@ function fit_hdp_bernoulli_mixture(X::AbstractMatrix{Bool},
                                    max_iter::Int=300,
                                    tol::Float64=1e-5,
                                    n_init::Int=3,
+                                   effective_K_threshold::Float64=0.95,
                                    rng::AbstractRNG=Random.GLOBAL_RNG)
     N, D = size(X)
     @assert length(group) == N "group length must equal number of rows in X"
@@ -541,7 +543,8 @@ function fit_hdp_bernoulli_mixture(X::AbstractMatrix{Bool},
     best_elbo = -Inf
     for _ in 1:n_init
         result = _run_hdp_cavi(X, group, n_groups, K_max, alpha, gamma,
-                                a_prior, b_prior, max_iter, tol, rng)
+                                a_prior, b_prior, max_iter, tol, rng;
+                                effective_K_threshold)
         if result.elbo > best_elbo
             best_elbo = result.elbo
             best_result = result

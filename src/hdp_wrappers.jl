@@ -82,8 +82,10 @@ function hdp_clustering(event_df::DataFrame;
 
     # Build transactions per group, then join
     all_txns = DataFrame[]
-    all_ids = Int[]
     all_grp  = Int[]
+    # Preserve the caller's id column type (Int, InlineString, …) instead of
+    # assuming Int, so record_assignments.id stays concretely typed.
+    all_ids = similar(event_df[!, :id], 0)
 
     for (j, gval) in enumerate(group_vals)
         sf = (group_by == :Group) ? string(gval) : nothing
@@ -103,6 +105,18 @@ function hdp_clustering(event_df::DataFrame;
 
     # Merge transactions, aligning columns (union of all item columns)
     all_items = sort(unique(reduce(vcat, names.(all_txns))))
+
+    # Item names become raw DataFrame columns in class_profiles/group_profiles;
+    # reject any that would shadow a reserved metadata column.
+    reserved = Set(["cluster", "beta_weight"])
+    for gl in group_labels
+        push!(reserved, "pi_" * gl)
+    end
+    clashing = filter(it -> it in reserved, all_items)
+    isempty(clashing) || error(
+        "Item name(s) $(clashing) collide with reserved profile metadata columns " *
+        "(cluster, beta_weight, pi_<group>); rename the item(s).")
+
     N_total = sum(nrow, all_txns)
     X_bool = falses(N_total, length(all_items))
     item_idx = Dict(s => i for (i, s) in enumerate(all_items))
@@ -191,7 +205,9 @@ groups share it. Fully shared clusters are `:universal`.
 """
 function hdp_cluster_categorization(result::HDPClusteringResult;
                                     presence_threshold::Float64=0.05,
-                                    beta_threshold::Float64=0.01)
+                                    beta_threshold::Float64=0.01,
+                                    universal_ratio::Float64=2.0,
+                                    ratio_floor::Float64=1e-8)
     hdp = result.hdp_result
     K = hdp.K_max
     J = hdp.n_groups
@@ -213,8 +229,8 @@ function hdp_cluster_categorization(result::HDPClusteringResult;
         elseif all(present)
             # All groups present — check if weights are similar
             pis = [hdp.pi_mean[j, k] for j in 1:J]
-            max_ratio = maximum(pis) / max(minimum(pis), 1e-8)
-            cat = max_ratio < 2.0 ? :universal : :both_present_but_unequal
+            max_ratio = maximum(pis) / max(minimum(pis), ratio_floor)
+            cat = max_ratio < universal_ratio ? :universal : :both_present_but_unequal
         elseif !any(present)
             cat = :negligible
         else
@@ -238,7 +254,8 @@ end
 
 Print a formatted summary of the HDP clustering result.
 """
-function clustering_summary(result::HDPClusteringResult; prob_threshold::Float64=0.15)
+function clustering_summary(result::HDPClusteringResult; prob_threshold::Float64=0.15,
+                            beta_threshold::Float64=0.01)
     hdp = result.hdp_result
     K = hdp.K_max
     J = hdp.n_groups
@@ -254,10 +271,10 @@ function clustering_summary(result::HDPClusteringResult; prob_threshold::Float64
     println("  Converged: $(hdp.converged) ($(hdp.n_iter) iterations)")
 
     # Cross-strata categorization
-    cat_df = hdp_cluster_categorization(result)
+    cat_df = hdp_cluster_categorization(result; beta_threshold)
     non_neg = filter(row -> row.category != :negligible, cat_df)
     if nrow(non_neg) > 0
-        println("\n  Active clusters: $(nrow(non_neg)) (β_weight > 0.01)")
+        println("\n  Active clusters: $(nrow(non_neg)) (β_weight > $beta_threshold)")
         cats = countmap(non_neg.category)
         for (c, n) in sort(collect(cats), by=x->string(x[1]))
             println("    $c: $n")
@@ -267,7 +284,7 @@ function clustering_summary(result::HDPClusteringResult; prob_threshold::Float64
     # Per-cluster detail for active clusters
     println("\n  Cluster profiles (items with θ ≥ $prob_threshold):")
     for k in 1:K
-        hdp.beta_mean[k] < 0.01 && continue
+        hdp.beta_mean[k] <= beta_threshold && continue  # negligible: same rule as categorization
 
         pi_str = join(["$(hdp.group_labels[j])=$(round(hdp.pi_mean[j,k], digits=3))"
                        for j in 1:J], ", ")
