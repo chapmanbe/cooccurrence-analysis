@@ -154,14 +154,15 @@ end
 
 # ── CAVI update functions ─────────────────────────────────────────────────────
 
-# E-step: update responsibilities given current variational params
+# E-step: update responsibilities given current variational params.
+# `Xf` (= Float64.(X)) is hoisted into `_run_hdp_cavi` and passed in so it is not
+# re-materialised (N×D) every iteration.
 function _hdp_e_step!(R::Matrix{Float64},
-                      X::AbstractMatrix{Bool},
+                      Xf::Matrix{Float64},
                       group::Vector{Int},
                       theta_alpha::Matrix{Float64},
                       theta_beta::Matrix{Float64},
                       E_log_pi::Matrix{Float64})
-    Xf = Float64.(X)
     K, D = size(theta_alpha)
 
     # K × D expected log probabilities
@@ -187,15 +188,15 @@ end
 # Atom update: q(θ_{k,d}) = Beta(alpha_prior_d + Σ_i r_{i,k} x_{i,d}, ...)
 function _hdp_update_atoms!(theta_alpha::Matrix{Float64},
                             theta_beta::Matrix{Float64},
-                            X::AbstractMatrix{Bool},
+                            Xf::Matrix{Float64},
+                            OneMinusXf::Matrix{Float64},
                             R::Matrix{Float64},
                             alpha_prior::Vector{Float64},
                             beta_prior::Vector{Float64})
-    Xf = Float64.(X)
     K, D = size(theta_alpha)
     # R' * Xf is K × D; R' * (1-Xf) is K × D
-    weighted_x    = R' * Xf          # K × D
-    weighted_1mx  = R' * (1.0 .- Xf) # K × D
+    weighted_x    = R' * Xf           # K × D
+    weighted_1mx  = R' * OneMinusXf   # K × D
     for k in 1:K
         theta_alpha[k, :] .= alpha_prior .+ weighted_x[k, :]
         theta_beta[k, :]  .= beta_prior  .+ weighted_1mx[k, :]
@@ -270,7 +271,7 @@ end
 
 # ── ELBO computation ──────────────────────────────────────────────────────────
 
-function _hdp_compute_elbo(X::AbstractMatrix{Bool},
+function _hdp_compute_elbo(Xf::Matrix{Float64},
                            R::Matrix{Float64},
                            group::Vector{Int},
                            theta_alpha::Matrix{Float64},
@@ -285,9 +286,8 @@ function _hdp_compute_elbo(X::AbstractMatrix{Bool},
                            E_log_pi::Matrix{Float64},
                            alpha::Float64,
                            gamma::Float64)
-    Xf = Float64.(X)
     N, K = size(R)
-    D = size(X, 2)
+    D = size(Xf, 2)
     n_groups = size(pi_alpha, 1)
 
     E_log_th   = _ψ.(theta_alpha) .- _ψ.(theta_alpha .+ theta_beta)   # K × D
@@ -386,6 +386,12 @@ function _run_hdp_cavi(X::AbstractMatrix{Bool},
 
     N, D = size(X)
 
+    # Hoist the dense float views of X out of the CAVI loop: the E-step, atom
+    # update, and ELBO all consume them every iteration (previously each
+    # re-materialised its own N×D copy).
+    Xf = Float64.(X)
+    OneMinusXf = 1.0 .- Xf
+
     R, theta_alpha, theta_beta, beta_a, beta_b, pi_a, pi_b =
         _hdp_init(X, group, n_groups, K_max, alpha_prior, beta_prior, rng)
 
@@ -411,10 +417,10 @@ function _run_hdp_cavi(X::AbstractMatrix{Bool},
 
     for iter in 1:max_iter
         # E-step
-        _hdp_e_step!(R, X, group, theta_alpha, theta_beta, E_log_pi)
+        _hdp_e_step!(R, Xf, group, theta_alpha, theta_beta, E_log_pi)
 
         # M-step: atoms
-        _hdp_update_atoms!(theta_alpha, theta_beta, X, R, alpha_prior, beta_prior)
+        _hdp_update_atoms!(theta_alpha, theta_beta, Xf, OneMinusXf, R, alpha_prior, beta_prior)
 
         # M-step: global sticks
         _hdp_update_global_sticks!(beta_a, beta_b, R, gamma)
@@ -426,7 +432,7 @@ function _run_hdp_cavi(X::AbstractMatrix{Bool},
         _compute_pi_mean!(pi_mean, pi_a, pi_b)
 
         # ELBO
-        elbo = _hdp_compute_elbo(X, R, group, theta_alpha, theta_beta,
+        elbo = _hdp_compute_elbo(Xf, R, group, theta_alpha, theta_beta,
                                   beta_a, beta_b, beta_mean, pi_a, pi_b,
                                   alpha_prior, beta_prior, E_log_pi, alpha, gamma)
 
