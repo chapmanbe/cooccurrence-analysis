@@ -254,7 +254,9 @@ function run_network_pipeline(data_path::String;
             println("  Shared edges: $(nrow(comp.shared_edges))")
             println("  Group A-only edges: $(nrow(comp.group_a_only_edges))")
             println("  Group B-only edges: $(nrow(comp.group_b_only_edges))")
-            println("  Community ARI: $(round(comp.community_ari, digits=4))")
+            ari_str = ismissing(comp.community_ari) ? "n/a (<2 shared items)" :
+                      string(round(comp.community_ari, digits=4))
+            println("  Community ARI: $ari_str")
             result[:comparison] = comp
         end
     end

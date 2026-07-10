@@ -606,8 +606,21 @@ end
             @test comp.shared_edges isa DataFrame
             @test comp.group_a_only_edges isa DataFrame
             @test comp.group_b_only_edges isa DataFrame
-            @test -1.0 <= comp.community_ari <= 1.0
+            @test ismissing(comp.community_ari) || -1.0 <= comp.community_ari <= 1.0
         end
+    end
+
+    @testset "compare_networks ARI missing for <2 shared (C11)" begin
+        # Two networks over disjoint item sets share 0 items → ARI undefined,
+        # which must surface as `missing`, not a misleading 0.0.
+        dfa = DataFrame(id=[1,1,2,2], seq=[1,2,1,2], Group=["A","A","A","A"],
+                        item=["A1","A2","A1","A2"], year=fill(2020,4))
+        dfb = DataFrame(id=[3,3,4,4], seq=[1,2,1,2], Group=["B","B","B","B"],
+                        item=["B1","B2","B1","B2"], year=fill(2020,4))
+        neta = build_cooccurrence_network(dfa; min_count=1, alpha=1.0)
+        netb = build_cooccurrence_network(dfb; min_count=1, alpha=1.0)
+        comp = compare_networks(neta, netb, detect_communities(neta), detect_communities(netb))
+        @test ismissing(comp.community_ari)
     end
 end
 

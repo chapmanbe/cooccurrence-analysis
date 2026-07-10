@@ -11,13 +11,14 @@ Result of comparing group_a and group_b co-occurrence networks.
 - `shared_edges`: DataFrame of edges present in both networks
 - `group_a_only_edges`: DataFrame of edges unique to the group_a network
 - `group_b_only_edges`: DataFrame of edges unique to the group_b network
-- `community_ari`: Adjusted Rand Index comparing community structures
+- `community_ari`: Adjusted Rand Index comparing community structures, or
+  `missing` when the two networks share fewer than 2 items (ARI undefined)
 """
 struct NetworkComparisonResult
     shared_edges::DataFrame
     group_a_only_edges::DataFrame
     group_b_only_edges::DataFrame
-    community_ari::Float64
+    community_ari::Union{Missing, Float64}
 end
 
 """
@@ -192,7 +193,9 @@ function compare_networks(group_a_net::CooccurrenceNetwork,
                          for s in shared_items_sorted]
         ari = _adjusted_rand_index(group_a_labels, group_b_labels)
     else
-        ari = 0.0
+        # Fewer than 2 shared items: ARI is undefined. Return missing rather
+        # than 0.0, which would falsely read as "chance-level agreement".
+        ari = missing
     end
 
     return NetworkComparisonResult(shared_df, group_a_only_df, group_b_only_df, ari)
