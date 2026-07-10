@@ -68,3 +68,25 @@ To make this practical at dataset scale, future work should:
 
 The script is left in place because the infrastructure is correct; only the
 runtime is the open issue.
+
+## `benchmark_phase2.jl`
+
+Micro-benchmark for the Phase-2 performance work (P1 matrix-based pairwise
+associations; P2 hoisting `Xf` out of the HDP CAVI loop). Generates a synthetic
+~10K-record event dataset (~60 items) and times the current code against an
+inline scan-based baseline that reproduces the pre-P1 double record scan.
+
+**Results (2026-07-10, Julia 1.12, Apple Silicon; ~10K records, 60 items):**
+
+| Path | Time | Note |
+|------|------|------|
+| Pairwise, scan baseline (double record scan) | 1.06 s | old O(M²·N), two scans/pair |
+| Pairwise, matrix path (`C = XᵀX`) | 0.34 s | **~3.1× faster here** |
+| HDP CAVI fit (K_max=10, n_init=1) | 0.31 s | 228 MB allocated |
+
+The pairwise speedup grows with the item count M (the scan cost is O(M²·N) and
+each pair also did O(k) `in` lookups), and with N. On this 60-item set the
+shared Fisher-exact test per pair is a floor both paths pay, so 3× understates
+the win on wider data. P2 changes no numerics (verified bit-identical over
+fixed-rng fits); it removes three N×D float allocations per CAVI iteration,
+which dominates memory on the ~190K-record flagship path.
