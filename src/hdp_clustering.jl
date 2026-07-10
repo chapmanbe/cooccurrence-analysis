@@ -398,7 +398,14 @@ function _run_hdp_cavi(X::AbstractMatrix{Bool},
     pi_mean = zeros(n_groups, K_max)
     _compute_pi_mean!(pi_mean, pi_a, pi_b)
 
-    prev_elbo = -Inf
+    # The documented global-stick approximation makes the ELBO non-monotone, so
+    # a single `|Δelbo| < tol` crossing can trigger on an oscillation rather than
+    # a plateau. Instead track the best ELBO seen and declare convergence only
+    # after PLATEAU_WINDOW consecutive iterations with no meaningful improvement.
+    PLATEAU_WINDOW = 5
+    prev_elbo = -Inf   # last computed ELBO (describes the returned iterate)
+    best_elbo = -Inf
+    no_improve = 0
     converged = false
     n_iter = max_iter
 
@@ -423,13 +430,19 @@ function _run_hdp_cavi(X::AbstractMatrix{Bool},
                                   beta_a, beta_b, beta_mean, pi_a, pi_b,
                                   alpha_prior, beta_prior, E_log_pi, alpha, gamma)
 
-        if abs(elbo - prev_elbo) < tol * (1.0 + abs(prev_elbo))
-            converged = true
-            n_iter = iter
-            prev_elbo = elbo
-            break
+        if elbo > best_elbo + tol * (1.0 + abs(best_elbo))
+            best_elbo = elbo
+            no_improve = 0
+        else
+            no_improve += 1
         end
         prev_elbo = elbo
+
+        if no_improve >= PLATEAU_WINDOW
+            converged = true
+            n_iter = iter
+            break
+        end
     end
 
     # Sort by global weight descending
@@ -515,7 +528,9 @@ function fit_hdp_bernoulli_mixture(X::AbstractMatrix{Bool},
         fill(alpha_prior, D), fill(beta_prior, D)
     end
 
-    # Multiple random restarts, keep best ELBO
+    # Multiple random restarts, keep best ELBO. A restart with non-finite ELBO
+    # never wins (NaN > best is false), so best_result stays `nothing` iff every
+    # restart failed — surface that instead of returning `nothing` silently.
     best_result = nothing
     best_elbo = -Inf
     for _ in 1:n_init
@@ -526,6 +541,10 @@ function fit_hdp_bernoulli_mixture(X::AbstractMatrix{Bool},
             best_result = result
         end
     end
+
+    best_result === nothing && error(
+        "HDP CAVI failed: all $n_init restart(s) produced a non-finite ELBO. " *
+        "Try more records, a smaller K_max, or a different rng seed.")
 
     return best_result
 end
