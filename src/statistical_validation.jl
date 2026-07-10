@@ -79,6 +79,17 @@ function test_association(item_a::AbstractString, item_b::AbstractString,
                           record_items::AbstractVector;
                           test::Symbol=:fisher)
     ct = build_contingency_table(item_a, item_b, record_items)
+    return test_association(ct; test)
+end
+
+"""
+    test_association(ct::AbstractMatrix{<:Integer}; test::Symbol=:fisher)
+
+Association test from a precomputed 2×2 contingency table `[n11 n10; n01 n00]`,
+avoiding a second scan over the records. Same return NamedTuple as the
+record-scanning method.
+"""
+function test_association(ct::AbstractMatrix{<:Integer}; test::Symbol=:fisher)
     n = sum(ct)
     observed = ct[1, 1]
 

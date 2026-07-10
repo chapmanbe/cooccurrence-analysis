@@ -84,46 +84,62 @@ function compute_pairwise_associations(event_df::DataFrame;
     # Apply timing filter (no-op when timing_filter == :all)
     df = filter_event_by_timing(df; timing_filter, concurrent_window)
 
-    # Build record item lists
+    # Build a record × item boolean matrix once. All co-occurrence counts then
+    # come from C = Xᵀ·X (BLAS) and per-item prevalence from column sums, so no
+    # pair rescans the records (was O(M²·N) with two scans per pair).
     gp = groupby(df, :id)
-    record_items = [sort(unique(g.item)) for g in gp]
-    n_records = length(record_items)
+    record_sets = [Set(g.item) for g in gp]
+    n_records = length(record_sets)
+    all_items = sort(unique(reduce(vcat, (collect(s) for s in record_sets); init=String[])))
+    M = length(all_items)
+    col_of = Dict(s => i for (i, s) in enumerate(all_items))
 
-    # Count prevalence per item
-    all_items = sort(unique(vcat(record_items...)))
-    prevalence = Dict{String, Int}()
-    for item in all_items
-        prevalence[item] = count(ps -> item in ps, record_items)
+    X = falses(n_records, M)
+    for (r, s) in enumerate(record_sets)
+        for it in s
+            X[r, col_of[it]] = true
+        end
     end
 
-    # Compute all pairwise stats
+    Xf = Float64.(X)
+    # C[i,j] = # records containing both item i and item j (integer, exact:
+    # 0/1 sums stay well within Float64's exact-integer range).
+    C = Xf' * Xf
+    prev = vec(sum(X, dims=1))  # prevalence per item (records containing it)
+
+    # Compute all pairwise stats from the matrix
     rows = NamedTuple[]
-    for i in 1:length(all_items)
-        for j in (i+1):length(all_items)
+    for i in 1:M
+        for j in (i+1):M
             a, b = all_items[i], all_items[j]
-            ct = build_contingency_table(a, b, record_items)
-            observed = ct[1, 1]
+            n11 = round(Int, C[i, j])
 
             # Skip pairs with zero co-occurrence
-            observed == 0 && continue
+            n11 == 0 && continue
 
-            n = sum(ct)
-            row_a = ct[1, 1] + ct[1, 2]
-            col_b = ct[1, 1] + ct[2, 1]
+            n10 = prev[i] - n11
+            n01 = prev[j] - n11
+            n00 = n_records - n11 - n10 - n01
+            ct = [n11 n10; n01 n00]
+
+            observed = n11
+            n = n_records
+            row_a = prev[i]
+            col_b = prev[j]
             expected = (row_a * col_b) / n
             lift = expected > 0 ? observed / expected : 0.0
             phi = phi_coefficient(ct)
             or_val = odds_ratio(ct)
 
-            # Statistical test
-            result = test_association(a, b, record_items; test)
+            # Statistical test (from the precomputed table — no rescan)
+            result = test_association(ct; test)
 
             push!(rows, (item_a=a, item_b=b,
                          observed=observed, expected=round(expected, digits=2),
                          lift=round(lift, digits=4), phi=round(phi, digits=4),
                          odds_ratio=round(or_val, digits=4),
                          p_value=result.p_value,
-                         n_a=prevalence[a], n_b=prevalence[b]))
+                         n_a=prev[i], n_b=prev[j]))
         end
     end
 
