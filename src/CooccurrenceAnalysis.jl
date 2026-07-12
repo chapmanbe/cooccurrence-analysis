@@ -26,7 +26,7 @@ export load_event_data, get_record_summary, build_transactions, build_transactio
        build_contingency_table, odds_ratio, test_association, validate_rules,
        adjust_pvalues,
        stratify_by, stratified_analysis, compare_strata,
-       run_full_pipeline,
+       run_full_pipeline, FullPipelineResult,
        format_itemset, significance_stars, results_summary,
        plot_arm_scatter, plot_arm_comparison, plot_arm_matrix
 
@@ -40,7 +40,7 @@ export CooccurrenceNetwork, CommunityResult, NetworkComparisonResult,
        plot_community_heatmap,
        plot_group_stratified_network, plot_centrality_barchart,
        plot_centrality_comparison,
-       run_network_pipeline
+       run_network_pipeline, NetworkPipelineResult
 
 # HDP clustering exports
 export HDPBernoulliResult, HDPClusteringResult,
@@ -67,7 +67,7 @@ export BernoulliMixtureResult, BernoulliMixtureModelSelection,
        clustering_summary,
        plot_class_probabilities, plot_bic_elbow,
        plot_class_profiles, plot_clustering_comparison,
-       run_clustering_pipeline,
+       run_clustering_pipeline, ClusteringPipelineResult,
        plot_upset, plot_record_heatmap,
        plot_item_prevalence, plot_cooccurrence_heatmap
 
@@ -90,6 +90,38 @@ include("arm_visualization.jl")
 include("overview_visualization.jl")
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Pipeline result types
+#
+# Concrete structs (rather than a Dict→NamedTuple whose shape varied by keyword)
+# so the return type is stable and discoverable. `stratified`/`comparison` are
+# `nothing` when `stratify_by_group=false`. `comparison` maps "X_vs_Y" → the
+# pairwise comparison for that group pair.
+# ──────────────────────────────────────────────────────────────────────────────
+
+struct FullPipelineResult
+    rules::DataFrame
+    itemsets::DataFrame
+    n_records::Int
+    n_total_records::Int
+    stratified::Union{Nothing, OrderedDict{String, Any}}
+    comparison::Union{Nothing, OrderedDict{String, DataFrame}}
+end
+
+struct NetworkPipelineResult
+    network::CooccurrenceNetwork
+    communities::CommunityResult
+    metrics::DataFrame
+    stratified::Union{Nothing, OrderedDict{String, Any}}
+    comparison::Union{Nothing, OrderedDict{String, NetworkComparisonResult}}
+end
+
+struct ClusteringPipelineResult
+    clustering::CooccurrenceAnalysisResult
+    stratified::Union{Nothing, OrderedDict{String, Any}}
+    comparison::Union{Nothing, OrderedDict{String, ClusteringComparisonResult}}
+end
+
+# ──────────────────────────────────────────────────────────────────────────────
 # End-to-end pipeline
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -101,7 +133,7 @@ include("overview_visualization.jl")
                       max_length::Int=4,
                       test::Symbol=:fisher,
                       correction::Symbol=:bh,
-                      stratify_by_group::Bool=true) -> NamedTuple
+                      stratify_by_group::Bool=true) -> FullPipelineResult
 
 Run the complete analysis pipeline:
 1. Load data from Arrow file
@@ -111,7 +143,7 @@ Run the complete analysis pipeline:
 5. Optionally stratify by group and compare
 
 # Returns
-NamedTuple with:
+`FullPipelineResult` with fields:
 - `rules`: Validated rules for the full population
 - `itemsets`: Frequent itemsets for the full population
 - `n_records`: Number of multi-item records
@@ -129,62 +161,58 @@ function run_full_pipeline(data_path::String;
                            stratify_by_group::Bool=true,
                            timing_filter::Symbol=:all,
                            concurrent_window::Int=0,
-                           exclusive_items::Union{Nothing, AbstractDict}=nothing)
-    println("Loading data from $data_path...")
+                           exclusive_items::Union{Nothing, AbstractDict}=nothing,
+                           verbose::Bool=true)
+    vprintln(args...) = verbose && println(args...)
+    vprintln("Loading data from $data_path...")
     event_df = load_event_data(data_path)
     n_total = length(unique(event_df.id))
-    println("  $n_total records, $(nrow(event_df)) event rows")
+    vprintln("  $n_total records, $(nrow(event_df)) event rows")
 
     # Full population analysis
-    println("\n═══ Full Population Analysis ═══")
+    vprintln("\n═══ Full Population Analysis ═══")
     txns_df = build_transactions(event_df; min_items=2,
                                   timing_filter, concurrent_window)
     n_multi = nrow(txns_df)
-    println("  Multi-item records: $n_multi ($(round(n_multi/n_total*100, digits=1))%)")
+    vprintln("  Multi-item records: $n_multi ($(round(n_multi/n_total*100, digits=1))%)")
 
     itemsets = mine_frequent_itemsets(txns_df;
         min_support, min_count, max_length)
     rules = mine_association_rules(txns_df;
         min_support, min_confidence, min_count, max_length)
-    println("  Frequent itemsets (≥2 items): $(nrow(itemsets))")
-    println("  Association rules: $(nrow(rules))")
+    vprintln("  Frequent itemsets (≥2 items): $(nrow(itemsets))")
+    vprintln("  Association rules: $(nrow(rules))")
 
     if nrow(rules) > 0
         rules = validate_rules(rules, event_df; test, correction)
         sig = count(rules.significant)
-        println("  Significant rules: $sig / $(nrow(rules))")
+        vprintln("  Significant rules: $sig / $(nrow(rules))")
     end
 
-    result = Dict{Symbol, Any}(
-        :rules => rules,
-        :itemsets => itemsets,
-        :n_records => n_multi,
-        :n_total_records => n_total
-    )
-
+    stratified = nothing
+    comparison = nothing
     if stratify_by_group
-        println("\n═══ Group-Stratified Analysis ═══")
-        strat = stratified_analysis(event_df;
+        vprintln("\n═══ Group-Stratified Analysis ═══")
+        stratified = stratified_analysis(event_df;
             min_support, min_confidence, min_count, max_length, test, correction,
-            timing_filter, concurrent_window, exclusive_items)
-        result[:stratified] = strat
+            timing_filter, concurrent_window, exclusive_items, verbose)
 
         # Pairwise cross-strata comparison over every group pair that has rules.
-        labels = collect(keys(strat))
+        labels = collect(keys(stratified))
         comparisons = OrderedDict{String, DataFrame}()
         for i in 1:length(labels), j in (i+1):length(labels)
             lx, ly = labels[i], labels[j]
-            (nrow(strat[lx].rules) > 0 && nrow(strat[ly].rules) > 0) || continue
-            comparisons["$(lx)_vs_$(ly)"] = compare_strata(strat[lx].rules, strat[ly].rules;
-                labels=(lx, ly), exclusive_items)
+            (nrow(stratified[lx].rules) > 0 && nrow(stratified[ly].rules) > 0) || continue
+            comparisons["$(lx)_vs_$(ly)"] = compare_strata(
+                stratified[lx].rules, stratified[ly].rules; labels=(lx, ly), exclusive_items)
         end
         if !isempty(comparisons)
-            println("\n═══ Cross-Strata Comparison ($(length(comparisons)) pair(s)) ═══")
-            result[:comparison] = comparisons
+            vprintln("\n═══ Cross-Strata Comparison ($(length(comparisons)) pair(s)) ═══")
+            comparison = comparisons
         end
     end
 
-    return NamedTuple(result)
+    return FullPipelineResult(rules, itemsets, n_multi, n_total, stratified, comparison)
 end
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -199,7 +227,7 @@ end
                           test::Symbol=:fisher,
                           correction::Symbol=:bh,
                           community_method::Symbol=:louvain,
-                          stratify_by_group::Bool=true) -> NamedTuple
+                          stratify_by_group::Bool=true) -> NetworkPipelineResult
 
 Run the complete network analysis pipeline:
 1. Load data and build co-occurrence network
@@ -207,7 +235,7 @@ Run the complete network analysis pipeline:
 3. Optionally build group-stratified networks and compare
 
 # Returns
-NamedTuple with:
+`NetworkPipelineResult` with fields:
 - `network`: CooccurrenceNetwork for the full population
 - `communities`: CommunityResult
 - `metrics`: Per-node metrics DataFrame
@@ -224,50 +252,48 @@ function run_network_pipeline(data_path::String;
                                stratify_by_group::Bool=true,
                                timing_filter::Symbol=:all,
                                concurrent_window::Int=0,
-                               exclusive_items::Union{Nothing, AbstractDict}=nothing)
-    println("Loading data from $data_path...")
+                               exclusive_items::Union{Nothing, AbstractDict}=nothing,
+                               verbose::Bool=true)
+    vprintln(args...) = verbose && println(args...)
+    vprintln("Loading data from $data_path...")
     event_df = load_event_data(data_path)
     n_total = length(unique(event_df.id))
-    println("  $n_total records, $(nrow(event_df)) event rows")
+    vprintln("  $n_total records, $(nrow(event_df)) event rows")
 
     # Full population network
-    println("\n═══ Full Population Network ═══")
+    vprintln("\n═══ Full Population Network ═══")
     net = build_cooccurrence_network(event_df;
         weight_metric, min_count, alpha, test, correction,
         timing_filter, concurrent_window)
     comm = detect_communities(net; method=community_method)
     metrics = compute_network_metrics(net)
-    network_summary(net, comm)
+    verbose && network_summary(net, comm)
 
-    result = Dict{Symbol, Any}(
-        :network => net,
-        :communities => comm,
-        :metrics => metrics
-    )
-
+    stratified = nothing
+    comparison = nothing
     if stratify_by_group
-        println("\n═══ Group-Stratified Networks ═══")
-        strat = stratified_network_analysis(event_df;
+        vprintln("\n═══ Group-Stratified Networks ═══")
+        stratified = stratified_network_analysis(event_df;
             weight_metric, min_count, alpha, test, correction,
-            community_method, timing_filter, concurrent_window, exclusive_items)
-        result[:stratified] = strat
+            community_method, timing_filter, concurrent_window, exclusive_items, verbose)
 
         # Pairwise network comparison over every group pair with non-empty graphs.
-        labels = collect(keys(strat))
+        labels = collect(keys(stratified))
         comparisons = OrderedDict{String, NetworkComparisonResult}()
         for i in 1:length(labels), j in (i+1):length(labels)
             lx, ly = labels[i], labels[j]
-            (nv(strat[lx].net.graph) > 0 && nv(strat[ly].net.graph) > 0) || continue
+            (nv(stratified[lx].net.graph) > 0 && nv(stratified[ly].net.graph) > 0) || continue
             comparisons["$(lx)_vs_$(ly)"] = compare_networks(
-                strat[lx].net, strat[ly].net, strat[lx].communities, strat[ly].communities)
+                stratified[lx].net, stratified[ly].net,
+                stratified[lx].communities, stratified[ly].communities)
         end
         if !isempty(comparisons)
-            println("\n═══ Network Comparison ($(length(comparisons)) pair(s)) ═══")
-            result[:comparison] = comparisons
+            vprintln("\n═══ Network Comparison ($(length(comparisons)) pair(s)) ═══")
+            comparison = comparisons
         end
     end
 
-    return NamedTuple(result)
+    return NetworkPipelineResult(net, comm, metrics, stratified, comparison)
 end
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -281,7 +307,7 @@ end
                              alpha_prior=1.0, beta_prior=1.0,
                              concentration=10.0, floor=1.0,
                              dirichlet_prior=1.0, n_init=5,
-                             stratify_by_group=true) -> NamedTuple
+                             stratify_by_group=true) -> ClusteringPipelineResult
 
 Run the complete Bayesian clustering pipeline:
 1. Load data and fit Bernoulli mixture models across K values
@@ -291,7 +317,7 @@ Run the complete Bayesian clustering pipeline:
 Set `prior=:empirical_bayes` for sparse data (Ye 2018-style per-feature priors).
 
 # Returns
-NamedTuple with:
+`ClusteringPipelineResult` with fields:
 - `clustering`: CooccurrenceAnalysisResult for full population
 - `stratified` (if stratify_by_group): NamedTuple with group_a_result, group_b_result
 - `comparison` (if stratify_by_group): ClusteringComparisonResult
@@ -307,41 +333,42 @@ function run_clustering_pipeline(data_path::String;
                                   dirichlet_prior::Float64=1.0,
                                   n_init::Int=5,
                                   stratify_by_group::Bool=true,
-                                  exclusive_items::Union{Nothing, AbstractDict}=nothing)
-    println("Loading data from $data_path...")
+                                  exclusive_items::Union{Nothing, AbstractDict}=nothing,
+                                  verbose::Bool=true)
+    vprintln(args...) = verbose && println(args...)
+    vprintln("Loading data from $data_path...")
     event_df = load_event_data(data_path)
     n_total = length(unique(event_df.id))
-    println("  $n_total records, $(nrow(event_df)) event rows")
+    vprintln("  $n_total records, $(nrow(event_df)) event rows")
 
-    println("\n═══ Full Population Bayesian Clustering ═══")
+    vprintln("\n═══ Full Population Bayesian Clustering ═══")
     clustering = bernoulli_clustering(event_df;
         K_range, min_items, prior, alpha_prior, beta_prior,
         concentration, floor, dirichlet_prior, n_init)
-    clustering_summary(clustering)
+    verbose && clustering_summary(clustering)
 
-    result = Dict{Symbol, Any}(:clustering => clustering)
-
+    stratified = nothing
+    comparison = nothing
     if stratify_by_group
-        println("\n═══ Group-Stratified Bayesian Clustering ═══")
-        strat = stratified_bernoulli_clustering(event_df;
+        vprintln("\n═══ Group-Stratified Bayesian Clustering ═══")
+        stratified = stratified_bernoulli_clustering(event_df;
             K_range, min_items, prior, alpha_prior, beta_prior,
-            concentration, floor, dirichlet_prior, n_init, exclusive_items)
-        result[:stratified] = strat
+            concentration, floor, dirichlet_prior, n_init, exclusive_items, verbose)
 
         # Pairwise clustering comparison over every group pair.
-        labels = collect(keys(strat))
+        labels = collect(keys(stratified))
         comparisons = OrderedDict{String, ClusteringComparisonResult}()
         for i in 1:length(labels), j in (i+1):length(labels)
             lx, ly = labels[i], labels[j]
-            comparisons["$(lx)_vs_$(ly)"] = compare_clusterings(strat[lx], strat[ly])
+            comparisons["$(lx)_vs_$(ly)"] = compare_clusterings(stratified[lx], stratified[ly])
         end
         if !isempty(comparisons)
-            println("\n═══ Clustering Comparison ($(length(comparisons)) pair(s)) ═══")
-            result[:comparison] = comparisons
+            vprintln("\n═══ Clustering Comparison ($(length(comparisons)) pair(s)) ═══")
+            comparison = comparisons
         end
     end
 
-    return NamedTuple(result)
+    return ClusteringPipelineResult(clustering, stratified, comparison)
 end
 
 end # module
