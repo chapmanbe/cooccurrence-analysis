@@ -72,6 +72,7 @@ export BernoulliMixtureResult, BernoulliMixtureModelSelection,
        plot_item_prevalence, plot_cooccurrence_heatmap
 
 include("utils.jl")
+include("plot_utils.jl")
 include("data_preparation.jl")
 include("mining.jl")
 include("statistical_validation.jl")

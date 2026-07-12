@@ -20,19 +20,9 @@ function plot_class_probabilities(result::CooccurrenceAnalysisResult;
     K, D = size(best.theta)
     items = result.item_names
 
-    # Filter to items above threshold
-    max_per_item = vec(maximum(best.theta, dims=1))
-    keep = findall(max_per_item .>= prob_threshold)
-    isempty(keep) && error("No items above threshold $prob_threshold")
-
-    # Order kept items by: event class, then probability within that class
-    event_class = [argmax(best.theta[:, j]) for j in keep]
-    event_prob = [best.theta[event_class[i], keep[i]] for i in eachindex(keep)]
-    order = sortperm(collect(zip(event_class, .-event_prob)))
-    keep_ordered = keep[order]
-
-    theta_sub = best.theta[:, keep_ordered]
-    item_labels = items[keep_ordered]
+    # Filter items above threshold and order them by dominant class (shared helper)
+    keep_ordered, theta_sub, item_labels = _filter_and_order_items(best.theta, items, prob_threshold)
+    isempty(keep_ordered) && error("No items above threshold $prob_threshold")
 
     fig = Figure(size=figsize)
     ax = Axis(fig[1, 1];
@@ -160,18 +150,9 @@ function plot_clustering_comparison(group_a::CooccurrenceAnalysisResult,
         K = best.K
         items = result.item_names
 
-        # Filter items
-        max_per_item = vec(maximum(best.theta, dims=1))
-        keep = findall(max_per_item .>= prob_threshold)
-        isempty(keep) && continue
-
-        event_class = [argmax(best.theta[:, j]) for j in keep]
-        event_prob = [best.theta[event_class[i], keep[i]] for i in eachindex(keep)]
-        order = sortperm(collect(zip(event_class, .-event_prob)))
-        keep_ordered = keep[order]
-
-        theta_sub = best.theta[:, keep_ordered]
-        item_labels = items[keep_ordered]
+        # Filter + order items (shared helper); skip groups with no items above threshold
+        keep_ordered, theta_sub, item_labels = _filter_and_order_items(best.theta, items, prob_threshold)
+        isempty(keep_ordered) && continue
 
         ax = Axis(fig[1, col_idx];
             title="$group (K=$K, $(result.n_records) records)",
@@ -316,19 +297,9 @@ function plot_hdp_class_profiles(result::HDPClusteringResult;
 
     theta_act = hdp.theta[active, :]     # K_act × D
 
-    # Filter items: at least one active cluster has θ_{k,d} ≥ prob_threshold
-    max_per_item = vec(maximum(theta_act, dims=1))
-    keep = findall(max_per_item .>= prob_threshold)
-    isempty(keep) && error("No items above prob_threshold=$prob_threshold")
-
-    # Order items by event cluster, then probability
-    event_class = [argmax(theta_act[:, d]) for d in keep]
-    event_prob  = [theta_act[event_class[i], keep[i]] for i in eachindex(keep)]
-    item_order    = sortperm(collect(zip(event_class, .-event_prob)))
-    keep_ordered  = keep[item_order]
-
-    theta_plot = theta_act[:, keep_ordered]    # K_act × n_items
-    item_labels = items[keep_ordered]
+    # Filter items (≥1 active cluster has θ ≥ prob_threshold) and order them
+    keep_ordered, theta_plot, item_labels = _filter_and_order_items(theta_act, items, prob_threshold)
+    isempty(keep_ordered) && error("No items above prob_threshold=$prob_threshold")
 
     # Category lookup for row labels
     cat_df = hdp_cluster_categorization(result; beta_threshold)
