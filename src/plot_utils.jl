@@ -60,3 +60,20 @@ function _minmax_scale(values, lo::Real, hi::Real)
     end
     return [lo + (hi - lo) * (v - vmin) / (vmax - vmin) for v in values]
 end
+
+"""
+    _layout_fn(layout::Symbol) -> NetworkLayout layout object
+
+Map a layout name to its `NetworkLayout` object: `:stress → Stress()`,
+`:spring → Spring()`, `:shell → Shell()`. Any unrecognized symbol falls back to
+`Stress()`, the default across the network plots.
+"""
+function _layout_fn(layout::Symbol)
+    if layout == :spring
+        return NetworkLayout.Spring()
+    elseif layout == :shell
+        return NetworkLayout.Shell()
+    else
+        return NetworkLayout.Stress()
+    end
+end

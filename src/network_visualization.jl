@@ -33,14 +33,7 @@ function plot_cooccurrence_network(net::CooccurrenceNetwork;
 
     # Node sizes proportional to prevalence
     prevs = Float64[get(net.prevalence, s, 1) for s in net.items]
-    min_p, max_p = extrema(prevs)
-    if min_p == max_p
-        node_sizes = fill(Float64(node_size_range[1] + node_size_range[2]) / 2, n)
-    else
-        node_sizes = [node_size_range[1] +
-                      (p - min_p) / (max_p - min_p) * (node_size_range[2] - node_size_range[1])
-                      for p in prevs]
-    end
+    node_sizes = _minmax_scale(prevs, node_size_range[1], node_size_range[2])
 
     # Node colors from community assignments
     if communities !== nothing && !isempty(communities.assignments)
@@ -55,31 +48,11 @@ function plot_cooccurrence_network(net::CooccurrenceNetwork;
     node_color = [palette[((c - 1) % n_colors) + 1] for c in comm_colors]
 
     # Edge widths proportional to weight
-    if ne(g) > 0
-        edge_weights = Float64[weight(e) for e in edges(g)]
-        min_w, max_w = extrema(edge_weights)
-        if min_w == max_w
-            edge_widths = fill((edge_width_range[1] + edge_width_range[2]) / 2,
-                               ne(g))
-        else
-            edge_widths = [edge_width_range[1] +
-                           (w - min_w) / (max_w - min_w) * (edge_width_range[2] - edge_width_range[1])
-                           for w in edge_weights]
-        end
-    else
-        edge_widths = Float64[]
-    end
+    edge_weights = ne(g) > 0 ? Float64[weight(e) for e in edges(g)] : Float64[]
+    edge_widths = _minmax_scale(edge_weights, edge_width_range[1], edge_width_range[2])
 
     # Layout
-    layout_fn = if layout == :stress
-        NetworkLayout.Stress()
-    elseif layout == :spring
-        NetworkLayout.Spring()
-    elseif layout == :shell
-        NetworkLayout.Shell()
-    else
-        NetworkLayout.Stress()
-    end
+    layout_fn = _layout_fn(layout)
 
     graphplot!(ax, g;
         layout=layout_fn,
@@ -134,12 +107,7 @@ function plot_network_comparison(group_a_net::CooccurrenceNetwork,
 
         # Node sizes
         prevs = Float64[get(net.prevalence, s, 1) for s in net.items]
-        min_p, max_p = extrema(prevs)
-        if min_p == max_p
-            node_sizes = fill(25.0, n)
-        else
-            node_sizes = [15.0 + (p - min_p) / (max_p - min_p) * 35.0 for p in prevs]
-        end
+        node_sizes = _minmax_scale(prevs, 15.0, 50.0)
 
         # Community colors
         palette = Makie.wong_colors()
@@ -151,21 +119,10 @@ function plot_network_comparison(group_a_net::CooccurrenceNetwork,
         end
 
         # Edge widths
-        if ne(g) > 0
-            ew = Float64[weight(e) for e in edges(g)]
-            min_w, max_w = extrema(ew)
-            if min_w == max_w
-                edge_widths = fill(2.0, ne(g))
-            else
-                edge_widths = [0.5 + (w - min_w) / (max_w - min_w) * 4.5 for w in ew]
-            end
-        else
-            edge_widths = Float64[]
-        end
+        ew = ne(g) > 0 ? Float64[weight(e) for e in edges(g)] : Float64[]
+        edge_widths = _minmax_scale(ew, 0.5, 5.0)
 
-        layout_fn = layout == :stress ? NetworkLayout.Stress() :
-                    layout == :spring ? NetworkLayout.Spring() :
-                    NetworkLayout.Stress()
+        layout_fn = _layout_fn(layout)
 
         graphplot!(ax, g;
             layout=layout_fn,
@@ -359,13 +316,7 @@ function plot_group_stratified_network(comparison::NetworkComparisonResult,
         f_prev = get(group_b_net.prevalence, s, 0)
         push!(node_sizes, Float64(max(m_prev, f_prev)))
     end
-    min_ns, max_ns = extrema(node_sizes)
-    if min_ns == max_ns
-        node_sizes = fill(25.0, n)
-    else
-        node_sizes = [15.0 + (p - min_ns) / (max_ns - min_ns) * 35.0
-                      for p in node_sizes]
-    end
+    node_sizes = _minmax_scale(node_sizes, 15.0, 50.0)
 
     # Edge colors
     palette = Makie.wong_colors()
@@ -381,9 +332,7 @@ function plot_group_stratified_network(comparison::NetworkComparisonResult,
     e_colors = [cat_colors[edge_idx_map[(min(src(e), dst(e)), max(src(e), dst(e)))]]
                 for e in edges(g)]
 
-    layout_fn = layout == :stress ? NetworkLayout.Stress() :
-                layout == :spring ? NetworkLayout.Spring() :
-                NetworkLayout.Stress()
+    layout_fn = _layout_fn(layout)
 
     graphplot!(ax, g;
         layout=layout_fn,
