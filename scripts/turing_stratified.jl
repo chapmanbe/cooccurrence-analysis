@@ -20,7 +20,8 @@ const DATA_PATH   = joinpath(@__DIR__, "..", "..", "ddata", "synthetic_events.ar
 const OUTPUT_DIR  = joinpath(@__DIR__, "..", "..", "ddata", "posterior_results")
 const N_SAMPLES   = 1000
 const MAX_ITER    = 1500
-const SUBSAMPLE   = 10_000   # ADVI on a 10K-record random subset per stratum
+const SUBSAMPLE   = 1_500    # ADVI on a small random subset per stratum
+                             # (marginalized ADVI does not scale; see scripts/README.md)
 const SEED        = 2026
 
 mkpath(OUTPUT_DIR)
