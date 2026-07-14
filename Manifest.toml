@@ -2,7 +2,7 @@
 
 julia_version = "1.12.4"
 manifest_format = "2.0"
-project_hash = "5fd59894d229a010ef9c104783c9322602b16dc5"
+project_hash = "9ff3ffc78ffc6bcd1d133bbfe372cff6141704b0"
 
 [[deps.ADTypes]]
 git-tree-sha1 = "bbc22a9a08a0ef6460041086d8a7b27940ed4ffd"
@@ -557,7 +557,7 @@ uuid = "d38c429a-6771-53c6-b99e-75d170b6e991"
 version = "0.6.3"
 
 [[deps.CooccurrenceAnalysis]]
-deps = ["Arrow", "CSV", "CairoMakie", "CategoricalArrays", "DataFrames", "Distributions", "GraphMakie", "Graphs", "HypothesisTests", "InlineStrings", "LinearAlgebra", "MCMCChains", "MultipleTesting", "NetworkLayout", "OrderedCollections", "Printf", "Random", "ReverseDiff", "Revise", "RuleMiner", "SimpleWeightedGraphs", "SpecialFunctions", "StatsBase", "Test", "Turing"]
+deps = ["Arrow", "CSV", "CairoMakie", "CategoricalArrays", "DataFrames", "Distributions", "GraphMakie", "Graphs", "HypothesisTests", "InlineStrings", "LinearAlgebra", "MCMCChains", "MultipleTesting", "NetworkLayout", "OrderedCollections", "Printf", "Random", "ReverseDiff", "Revise", "RuleMiner", "SimpleWeightedGraphs", "SpecialFunctions", "StableRNGs", "StatsBase", "Test", "Turing"]
 path = "."
 uuid = "02d9ee0a-1975-417e-bb5d-e9a98e82c5c6"
 version = "0.0.0"

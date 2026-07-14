@@ -5,6 +5,7 @@ using Graphs: nv, ne, add_edge!
 using SimpleWeightedGraphs: SimpleWeightedGraph
 using CairoMakie: Figure, Axis, BarPlot
 using Random
+using StableRNGs
 
 push!(LOAD_PATH, joinpath(@__DIR__, "..", "src"))
 using CooccurrenceAnalysis
@@ -121,6 +122,12 @@ FIXTURE_EXCLUSIVE = Dict("A" => FIXTURE_GROUP_A_ONLY, "B" => FIXTURE_GROUP_B_ONL
     @test significance_stars(0.005) == "**"
     @test significance_stars(0.03) == "*"
     @test significance_stars(0.1) == "ns"
+    # Boundary behavior (strict <): a value exactly on a threshold falls to the
+    # next-weaker bin (T4).
+    @test significance_stars(0.001) == "**"   # not "***"
+    @test significance_stars(0.01)  == "*"    # not "**"
+    @test significance_stars(0.05)  == "ns"   # not "*"
+    @test significance_stars(0.0)   == "***"
 end
 
 @testset "data_preparation" begin
@@ -302,6 +309,14 @@ end
         adj_bonf = adjust_pvalues(pvals; method=:bonferroni)
         @test all(adj_bonf .>= adj_bh)  # Bonferroni is more conservative
 
+        # Holm branch (T4): valid probabilities, ≥ raw, and no more conservative
+        # than Bonferroni.
+        adj_holm = adjust_pvalues(pvals; method=:holm)
+        @test length(adj_holm) == 5
+        @test all(0.0 .<= adj_holm .<= 1.0)
+        @test all(adj_holm .>= pvals)
+        @test all(adj_holm .<= adj_bonf .+ 1e-12)
+
         @test isempty(adjust_pvalues(Float64[]))
     end
 
@@ -326,19 +341,15 @@ end
         @test strat["A"].n_records == 6
         @test strat["B"].n_records == 14
 
-        # Group A rules should include GA1+Item05
-        if nrow(strat["A"].rules) > 0
-            rule_items = [Set(vcat(r.LHS, [r.RHS]))
-                         for r in eachrow(strat["A"].rules)]
-            @test any(s -> Set(["GA1", "Item05"]) ⊆ s, rule_items)
-        end
+        # Group A rules should include GA1+Item05 (T1: assert, don't skip)
+        @test nrow(strat["A"].rules) > 0
+        rule_items_a = [Set(vcat(r.LHS, [r.RHS])) for r in eachrow(strat["A"].rules)]
+        @test any(s -> Set(["GA1", "Item05"]) ⊆ s, rule_items_a)
 
         # Group B rules should include Item01+Item02
-        if nrow(strat["B"].rules) > 0
-            rule_items = [Set(vcat(r.LHS, [r.RHS]))
-                         for r in eachrow(strat["B"].rules)]
-            @test any(s -> Set(["Item01", "Item02"]) ⊆ s, rule_items)
-        end
+        @test nrow(strat["B"].rules) > 0
+        rule_items_b = [Set(vcat(r.LHS, [r.RHS])) for r in eachrow(strat["B"].rules)]
+        @test any(s -> Set(["Item01", "Item02"]) ⊆ s, rule_items_b)
     end
 
     @testset "_normalize_rule_key preserves consequent (C10)" begin
@@ -354,29 +365,28 @@ end
         strat = stratified_analysis(event_df;
             min_support=0.05, min_confidence=0.1, min_count=nothing)
         @test strat isa AbstractDict
+        @test nrow(strat["A"].rules) > 0 && nrow(strat["B"].rules) > 0  # T1
 
-        if nrow(strat["A"].rules) > 0 && nrow(strat["B"].rules) > 0
-            comp = compare_strata(strat["A"].rules, strat["B"].rules;
-                                  exclusive_items=FIXTURE_EXCLUSIVE)
-            @test "category" in names(comp)
-            @test "association" in names(comp)
-            @test "group_a_lift" in names(comp)
-            @test "group_b_lift" in names(comp)
-            @test all(comp.category .∈ Ref([:universal, :group_a_only,
-                                            :group_b_only, :group_specific_item]))
-        end
+        comp = compare_strata(strat["A"].rules, strat["B"].rules;
+                              exclusive_items=FIXTURE_EXCLUSIVE)
+        @test nrow(comp) > 0
+        @test "category" in names(comp)
+        @test "association" in names(comp)
+        @test "group_a_lift" in names(comp)
+        @test "group_b_lift" in names(comp)
+        @test all(comp.category .∈ Ref([:universal, :group_a_only,
+                                        :group_b_only, :group_specific_item]))
     end
 
     @testset "compare_strata dynamic labels" begin
         # Non-default labels must drive both the column prefixes and categories.
         strat = stratified_analysis(event_df;
             min_support=0.05, min_confidence=0.1, min_count=nothing)
-        if nrow(strat["A"].rules) > 0 && nrow(strat["B"].rules) > 0
-            comp = compare_strata(strat["A"].rules, strat["B"].rules; labels=("X", "Y"))
-            @test "group_x_lift" in names(comp)
-            @test "group_y_lift" in names(comp)
-            @test all(comp.category .∈ Ref([:universal, :group_x_only, :group_y_only]))
-        end
+        @test nrow(strat["A"].rules) > 0 && nrow(strat["B"].rules) > 0
+        comp = compare_strata(strat["A"].rules, strat["B"].rules; labels=("X", "Y"))
+        @test "group_x_lift" in names(comp)
+        @test "group_y_lift" in names(comp)
+        @test all(comp.category .∈ Ref([:universal, :group_x_only, :group_y_only]))
     end
 end
 
@@ -624,15 +634,14 @@ end
         strat = stratified_network_analysis(event_df;
             min_count=1, alpha=1.0)
 
-        if nv(strat["A"].net.graph) > 0 && nv(strat["B"].net.graph) > 0
-            comp = compare_networks(strat["A"].net, strat["B"].net,
-                                    strat["A"].communities, strat["B"].communities)
-            @test comp isa NetworkComparisonResult
-            @test comp.shared_edges isa DataFrame
-            @test comp.group_a_only_edges isa DataFrame
-            @test comp.group_b_only_edges isa DataFrame
-            @test ismissing(comp.community_ari) || -1.0 <= comp.community_ari <= 1.0
-        end
+        @test nv(strat["A"].net.graph) > 0 && nv(strat["B"].net.graph) > 0  # T1
+        comp = compare_networks(strat["A"].net, strat["B"].net,
+                                strat["A"].communities, strat["B"].communities)
+        @test comp isa NetworkComparisonResult
+        @test comp.shared_edges isa DataFrame
+        @test comp.group_a_only_edges isa DataFrame
+        @test comp.group_b_only_edges isa DataFrame
+        @test ismissing(comp.community_ari) || -1.0 <= comp.community_ari <= 1.0
     end
 
     @testset "compare_networks ARI missing for <2 shared (C11)" begin
@@ -707,7 +716,7 @@ end
 
 @testset "fit_bernoulli_mixture" begin
     # Planted 2-class data: class 1 has features 1,2; class 2 has features 3,4
-    rng = MersenneTwister(42)
+    rng = StableRNG(42)
     N = 100
     X = falses(N, 4)
     for i in 1:50
@@ -723,7 +732,7 @@ end
         X[i, 4] = rand(rng) < 0.7
     end
 
-    result = fit_bernoulli_mixture(X, 2; n_init=3, rng=MersenneTwister(123))
+    result = fit_bernoulli_mixture(X, 2; n_init=3, rng=StableRNG(123))
     @test result isa BernoulliMixtureResult
     @test result.K == 2
     @test size(result.theta) == (2, 4)
@@ -734,18 +743,30 @@ end
     @test sum(result.pi) ≈ 1.0
     @test result.bic isa Float64
     @test result.converged
+
+    # Planted-recovery: the fit must actually recover the two classes, not just
+    # produce simplex-valid output (T3). Truth is rows 1:50 → class 1, 51:100 → 2.
+    truth = vcat(fill(1, 50), fill(2, 100 - 50))
+    ari = CooccurrenceAnalysis._adjusted_rand_index(result.assignments, truth)
+    @test ari > 0.5  # well above chance (≈0); θ-recovery below is the sharper check
+    # θ recovery: the class dominated by features 1–2 vs the one by features 3–4.
+    c12 = argmax(result.theta[:, 1] .+ result.theta[:, 2])
+    c34 = argmax(result.theta[:, 3] .+ result.theta[:, 4])
+    @test c12 != c34
+    @test result.theta[c12, 1] > 0.5 && result.theta[c12, 2] > 0.5
+    @test result.theta[c34, 3] > 0.5 && result.theta[c34, 4] > 0.5
 end
 
 @testset "fit_bernoulli_mixture empty-cluster guard (C6, C8)" begin
     # K far larger than the true cluster count forces components to empty out.
     # Without the M-step guard this produced NaN θ (0/0) that poisoned the fit.
-    rng = MersenneTwister(7)
+    rng = StableRNG(7)
     N = 60
     X = falses(N, 4)
     for i in 1:30; X[i,1] = rand(rng) < 0.85; X[i,2] = rand(rng) < 0.8; end
     for i in 31:60; X[i,3] = rand(rng) < 0.85; X[i,4] = rand(rng) < 0.8; end
 
-    result = fit_bernoulli_mixture(X, 10; n_init=2, rng=MersenneTwister(1))
+    result = fit_bernoulli_mixture(X, 10; n_init=2, rng=StableRNG(1))
     @test all(isfinite, result.theta)
     @test !any(isnan, result.theta)
     @test all(0.0 .<= result.theta .<= 1.0)
@@ -756,7 +777,7 @@ end
 
     # Force non-convergence (max_iter=1): the returned params, LL and BIC must
     # still be self-consistent and finite (C8 resync after the final M-step).
-    r1 = fit_bernoulli_mixture(X, 3; n_init=1, max_iter=1, rng=MersenneTwister(2))
+    r1 = fit_bernoulli_mixture(X, 3; n_init=1, max_iter=1, rng=StableRNG(2))
     @test !r1.converged
     @test isfinite(r1.log_likelihood)
     @test isfinite(r1.bic)
@@ -764,7 +785,7 @@ end
 end
 
 @testset "select_K" begin
-    rng = MersenneTwister(42)
+    rng = StableRNG(42)
     N = 60
     X = falses(N, 4)
     for i in 1:30
@@ -774,7 +795,7 @@ end
         X[i, 3] = rand(rng) < 0.8; X[i, 4] = rand(rng) < 0.7
     end
 
-    ms = select_K(X, 2:4; n_init=2, rng=MersenneTwister(99))
+    ms = select_K(X, 2:4; n_init=2, rng=StableRNG(99))
     @test ms isa BernoulliMixtureModelSelection
     @test ms.best_K in 2:4
     @test ms.best isa BernoulliMixtureResult
@@ -818,7 +839,7 @@ end
 @testset "fit_bernoulli_mixture with empirical_bayes prior" begin
     # Sparse-data shrinkage check: rare features should be pulled toward marginal
     # under :empirical_bayes vs :flat
-    rng = MersenneTwister(2026)
+    rng = StableRNG(2026)
     N = 200
     D = 20
     X = falses(N, D)
@@ -837,10 +858,10 @@ end
     end
 
     flat_result = fit_bernoulli_mixture(X, 2;
-        prior=:flat, n_init=3, rng=MersenneTwister(7))
+        prior=:flat, n_init=3, rng=StableRNG(7))
     eb_result = fit_bernoulli_mixture(X, 2;
         prior=:empirical_bayes, concentration=10.0, floor=1.0,
-        n_init=3, rng=MersenneTwister(7))
+        n_init=3, rng=StableRNG(7))
 
     @test flat_result isa BernoulliMixtureResult
     @test eb_result isa BernoulliMixtureResult
@@ -867,14 +888,14 @@ end
 @testset "bernoulli_clustering with empirical_bayes" begin
     result = bernoulli_clustering(event_df;
         K_range=2:3, n_init=2, prior=:empirical_bayes,
-        concentration=5.0, rng=MersenneTwister(42))
+        concentration=5.0, rng=StableRNG(42))
     @test result isa CooccurrenceAnalysisResult
     @test nrow(result.class_profiles) in 2:3
 end
 
 @testset "fit_bernoulli_mixture_turing" begin
     # Small planted 2-cluster data
-    rng = MersenneTwister(7)
+    rng = StableRNG(7)
     N, D = 60, 5
     X = falses(N, D)
     for i in 1:30
@@ -885,7 +906,7 @@ end
     end
 
     post = fit_bernoulli_mixture_turing(X, 2;
-        n_samples=100, n_chains=1, rng=MersenneTwister(11))
+        n_samples=100, n_chains=1, rng=StableRNG(11))
 
     @test post isa BernoulliMixturePosterior
     @test post.K == 2
@@ -904,7 +925,7 @@ end
 end
 
 @testset "fit_bernoulli_mixture_turing with empirical_bayes" begin
-    rng = MersenneTwister(13)
+    rng = StableRNG(13)
     N, D = 50, 4
     X = falses(N, D)
     for i in 1:25
@@ -916,7 +937,7 @@ end
 
     post = fit_bernoulli_mixture_turing(X, 2;
         prior=:empirical_bayes, concentration=5.0,
-        n_samples=100, n_chains=1, rng=MersenneTwister(17))
+        n_samples=100, n_chains=1, rng=StableRNG(17))
     @test post isa BernoulliMixturePosterior
     @test post.K == 2
 end
@@ -929,7 +950,7 @@ end
 
 @testset "bernoulli_clustering_turing wrapper" begin
     post, items = bernoulli_clustering_turing(event_df, 2;
-        n_samples=100, n_chains=1, rng=MersenneTwister(42))
+        n_samples=100, n_chains=1, rng=StableRNG(42))
     @test post isa BernoulliMixturePosterior
     @test post.K == 2
     @test items isa Vector{String}
@@ -937,20 +958,53 @@ end
 end
 
 @testset "posterior_summary runs" begin
-    rng = MersenneTwister(21)
+    rng = StableRNG(21)
     N, D = 40, 3
     X = falses(N, D)
     X[1:20, 1] .= true
     X[21:40, 2] .= true
     post = fit_bernoulli_mixture_turing(X, 2;
-        n_samples=100, n_chains=1, rng=MersenneTwister(23))
+        n_samples=100, n_chains=1, rng=StableRNG(23))
     posterior_summary(post; n_top=2)
     @test true
 end
 
+@testset "fit_bernoulli_mixture_advi smoke + shapes (T4)" begin
+    # ADVI is exported but was untested. Keep the matrix tiny and max_iter low —
+    # the marginalized likelihood does not scale (see scripts/README.md).
+    rng = StableRNG(31)
+    N, D = 40, 4
+    X = falses(N, D)
+    for i in 1:20; X[i,1] = rand(rng) < 0.85; X[i,2] = rand(rng) < 0.8; end
+    for i in 21:40; X[i,3] = rand(rng) < 0.85; X[i,4] = rand(rng) < 0.8; end
+
+    post = fit_bernoulli_mixture_advi(X, 2;
+        max_iter=200, n_samples=100, rng=StableRNG(32))
+    @test post isa BernoulliMixturePosterior
+    @test post.K == 2
+    @test size(post.pi_samples) == (100, 2)
+    @test size(post.theta_samples) == (100, 2, D)
+    @test size(post.pi_ci) == (2, 2)
+    @test size(post.theta_ci) == (2, D, 2)
+    @test all(post.pi_ci[:, 1] .<= post.pi_ci[:, 2])
+    @test all(0.0 .<= post.theta_samples .<= 1.0)
+    @test size(post.responsibility_means) == (N, 2)
+    @test all(isapprox.(sum(post.responsibility_means, dims=2), 1.0; atol=1e-6))
+    @test length(post.assignments) == N
+    @test all(1 .<= post.assignments .<= 2)
+end
+
+@testset "bernoulli_clustering_advi wrapper (T4)" begin
+    post, items = bernoulli_clustering_advi(event_df, 2;
+        max_iter=200, n_samples=80, rng=StableRNG(5))
+    @test post isa BernoulliMixturePosterior
+    @test items isa Vector{String}
+    @test size(post.theta_samples, 3) == length(items)
+end
+
 @testset "bernoulli_clustering" begin
     result = bernoulli_clustering(event_df;
-        K_range=2:3, n_init=2, rng=MersenneTwister(42))
+        K_range=2:3, n_init=2, rng=StableRNG(42))
     @test result isa CooccurrenceAnalysisResult
     @test result.n_records == 20
     @test nrow(result.class_profiles) in 2:3
@@ -962,7 +1016,7 @@ end
 
 @testset "stratified_bernoulli_clustering" begin
     strat = stratified_bernoulli_clustering(event_df;
-        K_range=2:3, n_init=2, rng=MersenneTwister(42),
+        K_range=2:3, n_init=2, rng=StableRNG(42),
         exclusive_items=FIXTURE_EXCLUSIVE)
     @test strat isa AbstractDict
     @test Set(keys(strat)) == Set(["A", "B"])
@@ -979,7 +1033,7 @@ end
 
 @testset "compare_clusterings" begin
     strat = stratified_bernoulli_clustering(event_df;
-        K_range=2:3, n_init=2, rng=MersenneTwister(42))
+        K_range=2:3, n_init=2, rng=StableRNG(42))
     comp = compare_clusterings(strat["A"], strat["B"])
     @test comp isa ClusteringComparisonResult
     @test comp.shared_high_prob_items isa DataFrame
@@ -988,7 +1042,7 @@ end
 
 @testset "clustering_summary" begin
     result = bernoulli_clustering(event_df;
-        K_range=2:3, n_init=2, rng=MersenneTwister(42))
+        K_range=2:3, n_init=2, rng=StableRNG(42))
     # Should run without error
     clustering_summary(result)
     clustering_summary(result; prob_threshold=0.5)
@@ -997,7 +1051,7 @@ end
 
 @testset "bayesian_visualization" begin
     result = bernoulli_clustering(event_df;
-        K_range=2:3, n_init=2, rng=MersenneTwister(42))
+        K_range=2:3, n_init=2, rng=StableRNG(42))
 
     @testset "plot_class_probabilities" begin
         fig = plot_class_probabilities(result)
@@ -1016,7 +1070,7 @@ end
 
     @testset "plot_clustering_comparison" begin
         strat = stratified_bernoulli_clustering(event_df;
-            K_range=2:3, n_init=2, rng=MersenneTwister(42))
+            K_range=2:3, n_init=2, rng=StableRNG(42))
         fig = plot_clustering_comparison(strat["A"], strat["B"])
         @test fig isa Figure
     end
@@ -1056,11 +1110,10 @@ end
     @testset "plot_arm_comparison" begin
         strat = stratified_analysis(event_df;
             min_support=0.05, min_confidence=0.1, min_count=nothing)
-        if nrow(strat["A"].rules) > 0 && nrow(strat["B"].rules) > 0
-            comp = compare_strata(strat["A"].rules, strat["B"].rules)
-            fig = plot_arm_comparison(comp)
-            @test fig isa Figure
-        end
+        @test nrow(strat["A"].rules) > 0 && nrow(strat["B"].rules) > 0  # T1
+        comp = compare_strata(strat["A"].rules, strat["B"].rules)
+        fig = plot_arm_comparison(comp)
+        @test fig isa Figure
     end
 end
 
@@ -1079,12 +1132,11 @@ end
 
     @testset "plot_group_stratified_network" begin
         strat = stratified_network_analysis(event_df; min_count=1, alpha=1.0)
-        if nv(strat["A"].net.graph) > 0 && nv(strat["B"].net.graph) > 0
-            comp = compare_networks(strat["A"].net, strat["B"].net,
-                                    strat["A"].communities, strat["B"].communities)
-            fig = plot_group_stratified_network(comp, strat["A"].net, strat["B"].net)
-            @test fig isa Figure
-        end
+        @test nv(strat["A"].net.graph) > 0 && nv(strat["B"].net.graph) > 0  # T1
+        comp = compare_networks(strat["A"].net, strat["B"].net,
+                                strat["A"].communities, strat["B"].communities)
+        fig = plot_group_stratified_network(comp, strat["A"].net, strat["B"].net)
+        @test fig isa Figure
     end
 
     @testset "plot_centrality_comparison" begin
@@ -1182,7 +1234,7 @@ end
         # - cluster A: items 1-2 active, present in both groups
         # - cluster B: items 3-4 active, group_a-only
         # - cluster C: items 5-6 active, group_b-only
-        rng = MersenneTwister(2026)
+        rng = StableRNG(2026)
         N_per = 130    # records per cluster
         D = 8
 
@@ -1214,7 +1266,7 @@ end
 
         result = fit_hdp_bernoulli_mixture(X, grp, 2;
             K_max=8, alpha=1.0, gamma=1.0,
-            prior=:flat, n_init=3, rng=MersenneTwister(99))
+            prior=:flat, n_init=6, rng=StableRNG(99))
 
         @test result isa HDPBernoulliResult
         @test result.K_max == 8
@@ -1245,7 +1297,7 @@ end
 
     @testset "K_max truncation insensitivity" begin
         # Same planted data, verify effective_K stable across K_max
-        rng = MersenneTwister(42)
+        rng = StableRNG(42)
         N, D = 180, 6
         X = falses(N, D)
         grp = ones(Int, N)
@@ -1254,8 +1306,8 @@ end
         for i in 61:120; X[i,3]=rand(rng)<0.8; X[i,4]=rand(rng)<0.7; end
         for i in 121:180; X[i,5]=rand(rng)<0.8; X[i,6]=rand(rng)<0.7; end
 
-        r6  = fit_hdp_bernoulli_mixture(X, grp, 2; K_max=6,  n_init=2, rng=MersenneTwister(1))
-        r12 = fit_hdp_bernoulli_mixture(X, grp, 2; K_max=12, n_init=2, rng=MersenneTwister(1))
+        r6  = fit_hdp_bernoulli_mixture(X, grp, 2; K_max=6,  n_init=2, rng=StableRNG(1))
+        r12 = fit_hdp_bernoulli_mixture(X, grp, 2; K_max=12, n_init=2, rng=StableRNG(1))
 
         # Effective K should be similar (both ~3 clusters)
         @test abs(r6.effective_K - r12.effective_K) <= 2
@@ -1264,7 +1316,7 @@ end
     end
 
     @testset "empirical_bayes prior" begin
-        rng = MersenneTwister(7)
+        rng = StableRNG(7)
         N, D = 120, 8
         X = falses(N, D)
         grp = vcat(ones(Int, 60), fill(2, 60))
@@ -1273,7 +1325,7 @@ end
 
         result = fit_hdp_bernoulli_mixture(X, grp, 2;
             K_max=6, prior=:empirical_bayes, concentration=5.0,
-            n_init=2, rng=MersenneTwister(11))
+            n_init=2, rng=StableRNG(11))
         @test result isa HDPBernoulliResult
         @test all(0.0 .<= result.theta .<= 1.0)
     end
@@ -1286,14 +1338,14 @@ end
     end
 
     @testset "single group reduces gracefully" begin
-        rng = MersenneTwister(3)
+        rng = StableRNG(3)
         N, D = 80, 4
         X = falses(N, D)
         grp = ones(Int, N)
         for i in 1:40; X[i,1]=rand(rng)<0.8; end
         for i in 41:80; X[i,2]=rand(rng)<0.8; end
 
-        result = fit_hdp_bernoulli_mixture(X, grp, 1; K_max=6, n_init=2, rng=MersenneTwister(5))
+        result = fit_hdp_bernoulli_mixture(X, grp, 1; K_max=6, n_init=2, rng=StableRNG(5))
         @test result isa HDPBernoulliResult
         @test result.n_groups == 1
         @test size(result.pi_mean) == (1, 6)
@@ -1312,7 +1364,7 @@ end
 
     @testset "hdp_clustering on event_df" begin
         result = hdp_clustering(event_df;
-            group_by=:Group, K_max=4, n_init=2, rng=MersenneTwister(42))
+            group_by=:Group, K_max=4, n_init=2, rng=StableRNG(42))
 
         @test result isa HDPClusteringResult
         @test result.hdp_result isa HDPBernoulliResult
@@ -1344,7 +1396,7 @@ end
 
     @testset "hdp_cluster_categorization structure" begin
         result = hdp_clustering(event_df;
-            group_by=:Group, K_max=4, n_init=2, rng=MersenneTwister(77))
+            group_by=:Group, K_max=4, n_init=2, rng=StableRNG(77))
 
         cat_df = hdp_cluster_categorization(result)
         @test cat_df isa DataFrame
@@ -1384,7 +1436,7 @@ end
         end
 
         result = hdp_clustering(planted_event_df();
-            group_by=:Group, K_max=6, n_init=4, rng=MersenneTwister(2026))
+            group_by=:Group, K_max=6, n_init=4, rng=StableRNG(2026))
         cat_df = hdp_cluster_categorization(result)
         cats = Set(cat_df.category)
 
@@ -1398,7 +1450,7 @@ end
 
     @testset "clustering_summary prints without error" begin
         result = hdp_clustering(event_df;
-            group_by=:Group, K_max=4, n_init=1, rng=MersenneTwister(13))
+            group_by=:Group, K_max=4, n_init=1, rng=StableRNG(13))
         # Verify it runs without throwing; capture to devnull to keep test output clean
         redirect_stdout(devnull) do
             clustering_summary(result)
@@ -1409,7 +1461,7 @@ end
     @testset "timing_filter propagates" begin
         result = hdp_clustering(event_df;
             group_by=:Group, K_max=4, timing_filter=:all, n_init=1,
-            rng=MersenneTwister(5))
+            rng=StableRNG(5))
         @test result isa HDPClusteringResult
     end
 
@@ -1427,7 +1479,7 @@ end
 @testset "HDP visualization" begin
     # Shared fixture: a small but meaningful HDP result on the test event_df
     hdp_result = hdp_clustering(event_df;
-        group_by=:Group, K_max=4, n_init=2, rng=MersenneTwister(42))
+        group_by=:Group, K_max=4, n_init=2, rng=StableRNG(42))
 
     @testset "plot_hdp_stick_weights" begin
         fig = plot_hdp_stick_weights(hdp_result)
@@ -1453,7 +1505,7 @@ end
         # Build a single-group HDP result by filtering to one group
         event_single = filter(r -> r.Group == "B", event_df)
         hdp_single = hdp_clustering(event_single;
-            group_by=:Group, K_max=3, n_init=1, rng=MersenneTwister(7))
+            group_by=:Group, K_max=3, n_init=1, rng=StableRNG(7))
         @test_throws ErrorException plot_hdp_cluster_butterfly(hdp_single)
     end
 
@@ -1502,7 +1554,7 @@ end
 
     # HDP clustering must work end-to-end
     hdp_inline = hdp_clustering(df_inline;
-        group_by=:Group, K_max=3, n_init=1, rng=MersenneTwister(99))
+        group_by=:Group, K_max=3, n_init=1, rng=StableRNG(99))
     @test hdp_inline isa HDPClusteringResult
 end
 
@@ -1572,21 +1624,23 @@ end
 
     @testset "flat-K clustering stratification over 3 groups" begin
         strat = stratified_bernoulli_clustering(df3; K_range=2:3, n_init=1,
-            exclusive_items=excl3, verbose=false, rng=MersenneTwister(7))
+            exclusive_items=excl3, verbose=false, rng=StableRNG(7))
         @test Set(keys(strat)) == Set(["A", "B", "C"])
         @test all(g -> strat[g] isa CooccurrenceAnalysisResult, ["A", "B", "C"])
     end
 
     @testset "HDP native 3-group categorization" begin
         result = hdp_clustering(df3; group_by=:Group, K_max=6, n_init=3,
-            rng=MersenneTwister(2026))
+            rng=StableRNG(2026))
         @test result.hdp_result.n_groups == 3
         cats = Set(hdp_cluster_categorization(result).category)
-        # The shared {S1,S2} cluster is universal; the private pairs are single-group.
-        @test :universal in cats
+        # The shared {S1,S2} cluster is present in every group (:universal, or
+        # :both_present_but_unequal if the per-group weights differ); the private
+        # pairs are single-group.
+        @test (:universal in cats) || (:both_present_but_unequal in cats)
         @test any(c -> c in (:group_a_only, :group_b_only, :group_c_only), cats)
-        # No buggy prefix-less or uppercase forms.
-        @test !any(c -> occursin("_and_", string(c)) && !startswith(string(c), "group_"), cats)
+        # Single-group labels use the lowercased group_<x>_only form.
+        @test !(:a_only in cats) && !(:b_only in cats) && !(:c_only in cats)
     end
 end
 
