@@ -71,7 +71,7 @@ function plot_upset(txns::DataFrame;
 
     # ── Top-right: intersection size bars ──
     ax_bars = Axis(gl[1, 2];
-        title="UpSet Plot: Item Co-occurrence Intersections",
+        title="UpSet Plot: $(VOCAB.item) Co-occurrence Intersections",
         titlesize=16,
         ylabel="Intersection Size",
         xticks=(1:n_combos, fill("", n_combos)))
@@ -184,10 +184,10 @@ function plot_record_heatmap(txns::DataFrame;
 
     fig = Figure(size=figsize)
     ax = Axis(fig[1, 1];
-        title="Record × Item Matrix ($(n_records) records)",
+        title="$(VOCAB.record) × $(VOCAB.item) Matrix ($(n_records) $(VOCAB.records))",
         titlesize=16,
-        xlabel="Item",
-        ylabel="Record (sorted by # items)",
+        xlabel="$(VOCAB.item)",
+        ylabel="$(VOCAB.record) (sorted by # $(VOCAB.items))",
         xticks=(1:n_items, items),
         xticklabelrotation=π/3,
         xticklabelsize=9)
@@ -211,13 +211,17 @@ group_a cohort (blue), and overall (dark grey). Bars are sorted by overall
 prevalence descending (highest at top).
 
 `event_df` must contain columns `:id`, `:item`, `:Group`.
+
+`colors` overrides the two group series colors as `(group_a, group_b)` — i.e. in
+sorted group order. Pass it when a caller needs a specific group-to-color mapping
+(for example to keep a previously published figure's colors stable).
 """
 function plot_item_prevalence(event_df::DataFrame;
                               top_n::Int=30,
+                              colors=(Makie.wong_colors()[1], Makie.wong_colors()[2]),
                               figsize::Tuple{Int,Int}=(850, 550))
-    palette = Makie.wong_colors()
-    col_group_b  = palette[2]   # orange
-    col_group_a    = palette[1]   # blue
+    col_group_a = colors[1]
+    col_group_b = colors[2]
     col_overall = :gray30
 
     # Count distinct records per item × Group
@@ -264,9 +268,9 @@ function plot_item_prevalence(event_df::DataFrame;
 
     fig = Figure(size=figsize)
     ax = Axis(fig[1, 1];
-        title="Item Prevalence (% of records with each item)",
+        title="$(VOCAB.item) Prevalence (% of $(VOCAB.records) with each $(item_lc()))",
         titlesize=14,
-        xlabel="% records",
+        xlabel="% $(VOCAB.records)",
         yticks=(ys_ov, reverse(top_items.item)),  # top-prevalent at top
         yticklabelsize=9,
         limits=((0, max(maximum(pct_overall), maximum(pct_group_b), maximum(pct_group_a)) * 1.12),
@@ -311,15 +315,16 @@ function plot_cooccurrence_heatmap(event_df::DataFrame;
                                    min_items::Int=2,
                                    figsize::Tuple{Int,Int}=(750, 650))
     # Filter by group. :group_a / :group_b select the first / second sorted group
-    # value (no domain regex); :both uses every record.
-    df = if group === :group_a || group === :group_b
+    # value (no domain regex); :both uses every record. `title_str` reports the
+    # group's actual value, so the figure reads in the caller's vocabulary.
+    df, title_str = if group === :group_a || group === :group_b
         groupvals = sort(unique(event_df.Group))
         idx = group === :group_a ? 1 : 2
         idx > length(groupvals) && error("No group at sorted position $idx for group=$group")
         gv = groupvals[idx]
-        filter(r -> r.Group == gv, event_df)
+        filter(r -> r.Group == gv, event_df), string(gv)
     else
-        event_df
+        event_df, "All $(VOCAB.records)"
     end
 
     # Build per-record binary matrix (all records for marginal counts)
@@ -356,12 +361,9 @@ function plot_cooccurrence_heatmap(event_df::DataFrame;
     sorted_items = items[order]
     phi_sorted   = phi[order, order]
 
-    title_str = group === :both ? "All records" :
-                group === :group_b ? "Group B" : "Group A"
-
     fig = Figure(size=figsize)
     ax = Axis(fig[1, 1];
-        title="Item Co-occurrence (φ coefficient) — $title_str",
+        title="$(VOCAB.item) Co-occurrence (φ coefficient) — $title_str",
         titlesize=13,
         xticks=(1:D, sorted_items),
         yticks=(1:D, sorted_items),

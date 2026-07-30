@@ -113,12 +113,18 @@ function main()
         test             = :fisher,
         correction       = :bh,
         community_method = :louvain)
-    @printf "  Group B network: %d nodes, %d edges\n" nv(strat_net.group_b_net.graph) ne(strat_net.group_b_net.graph)
-    @printf "  Group A   network: %d nodes, %d edges\n" nv(strat_net.group_a_net.graph)   ne(strat_net.group_a_net.graph)
+    # stratified_network_analysis keys its results by group value (an OrderedDict
+    # in sorted group order), not by positional field name.
+    labels = collect(keys(strat_net))
+    for g in labels
+        @printf "  %s network: %d nodes, %d edges\n" g nv(strat_net[g].net.graph) ne(strat_net[g].net.graph)
+    end
 
-    fig_groupnet = plot_network_comparison(strat_net.group_a_net, strat_net.group_b_net;
-                                         group_a_comm=strat_net.group_a_communities,
-                                         group_b_comm=strat_net.group_b_communities)
+    ga, gb = labels[1], labels[2]
+    fig_groupnet = plot_network_comparison(strat_net[ga].net, strat_net[gb].net;
+                                         group_a_comm=strat_net[ga].communities,
+                                         group_b_comm=strat_net[gb].communities,
+                                         labels=(ga, gb))
     save(joinpath(OUTPUT_DIR, "network_group_stratified.png"), fig_groupnet; px_per_unit=2)
     println("  network_group_stratified.png")
 

@@ -123,7 +123,7 @@ function plot_arm_comparison(comparison::DataFrame;
 
     fig = Figure(size=figsize)
     ax = Axis(fig[1, 1];
-        title="Group-Stratified Association Comparison ($(metric))",
+        title="$(VOCAB.group)-Stratified Association Comparison ($(metric))",
         titlesize=16,
         xlabel=string(metric),
         yticks=(1:n, associations),
@@ -194,7 +194,7 @@ function plot_arm_matrix(rules::DataFrame;
     ax = Axis(fig[1, 1];
         title="Pairwise Association Strength ($(value_metric))",
         titlesize=16,
-        xlabel="Item", ylabel="Item",
+        xlabel="$(VOCAB.item)", ylabel="$(VOCAB.item)",
         xticks=(1:n, all_items),
         yticks=(1:n, all_items),
         xticklabelrotation=π/3,

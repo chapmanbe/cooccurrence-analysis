@@ -28,7 +28,7 @@ function plot_class_probabilities(result::CooccurrenceAnalysisResult;
     ax = Axis(fig[1, 1];
         title="Latent Class Probability Profiles (K=$(K))",
         titlesize=16,
-        xlabel="Item", ylabel="Latent Class",
+        xlabel="$(VOCAB.item)", ylabel="Latent Class",
         xticks=(1:length(item_labels), item_labels),
         yticks=(1:K, ["Class $k ($(round(best.pi[k]*100, digits=1))%)" for k in 1:K]),
         xticklabelrotation=π/3,
@@ -40,7 +40,7 @@ function plot_class_probabilities(result::CooccurrenceAnalysisResult;
     heatmap!(ax, 1:length(item_labels), 1:K, theta_sub';
              colormap=:YlOrRd, colorrange=(0.0, 1.0))
 
-    Colorbar(fig[1, 2]; label="P(item | class)",
+    Colorbar(fig[1, 2]; label="P($(item_lc()) | class)",
              colormap=:YlOrRd,
              limits=(0.0, 1.0))
 
@@ -118,7 +118,7 @@ function plot_class_profiles(result::CooccurrenceAnalysisResult;
         ax = Axis(fig[row, col];
             title="Class $k ($pct%)",
             titlesize=14,
-            xlabel="P(item | class)",
+            xlabel="P($(item_lc()) | class)",
             yticks=(1:length(top_items_rev), top_items_rev),
             yticklabelsize=9)
 
@@ -135,17 +135,20 @@ end
     plot_clustering_comparison(group_a::CooccurrenceAnalysisResult,
                                 group_b::CooccurrenceAnalysisResult;
                                 prob_threshold=0.1,
+                                labels=("A", "B"),
                                 figsize=(1400, 500)) -> Figure
 
 Side-by-side heatmaps of class probabilities for group_a and group_b cohorts.
+`labels` names the two panels.
 """
 function plot_clustering_comparison(group_a::CooccurrenceAnalysisResult,
                                     group_b::CooccurrenceAnalysisResult;
                                     prob_threshold::Float64=0.1,
+                                    labels::Tuple{AbstractString, AbstractString}=("A", "B"),
                                     figsize::Tuple{Int,Int}=(1400, 500))
     fig = Figure(size=figsize)
 
-    for (col_idx, result, group) in [(1, group_a, "A"), (2, group_b, "B")]
+    for (col_idx, result, group) in [(1, group_a, labels[1]), (2, group_b, labels[2])]
         best = result.model_selection.best
         K = best.K
         items = result.item_names
@@ -155,9 +158,9 @@ function plot_clustering_comparison(group_a::CooccurrenceAnalysisResult,
         isempty(keep_ordered) && continue
 
         ax = Axis(fig[1, col_idx];
-            title="$group (K=$K, $(result.n_records) records)",
+            title="$group (K=$K, $(result.n_records) $(VOCAB.records))",
             titlesize=14,
-            xlabel="Item", ylabel="Class",
+            xlabel="$(VOCAB.item)", ylabel="Class",
             xticks=(1:length(item_labels), item_labels),
             yticks=(1:K, ["$k" for k in 1:K]),
             xticklabelrotation=π/3,
@@ -167,7 +170,7 @@ function plot_clustering_comparison(group_a::CooccurrenceAnalysisResult,
                  colormap=:YlOrRd, colorrange=(0, 1))
     end
 
-    Colorbar(fig[1, 3]; label="P(item | class)",
+    Colorbar(fig[1, 3]; label="P($(item_lc()) | class)",
              colormap=:YlOrRd, limits=(0, 1))
 
     return fig
@@ -315,7 +318,7 @@ function plot_hdp_class_profiles(result::HDPClusteringResult;
     ax = Axis(fig[1, 1];
         title="HDP Cluster Profiles — Posterior Mean θ[k,d]",
         titlesize=15,
-        xlabel="Item",
+        xlabel="$(VOCAB.item)",
         ylabel="Cluster",
         xticks=(1:n_items, item_labels),
         yticks=(1:K_act, row_labels),
@@ -386,7 +389,7 @@ function plot_hdp_sharing_heatmap(result::HDPClusteringResult;
     ax = Axis(fig[1, 1];
         title="HDP Cross-Strata Cluster Sharing (π[j,k])",
         titlesize=14,
-        xlabel="Group",
+        xlabel="$(VOCAB.group)",
         ylabel="Cluster",
         xticks=(1:J, labels),
         yticks=(1:K_act, row_labels),

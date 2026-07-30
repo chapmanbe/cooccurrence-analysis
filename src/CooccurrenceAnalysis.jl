@@ -42,6 +42,9 @@ export CooccurrenceNetwork, CommunityResult, NetworkComparisonResult,
        plot_centrality_comparison,
        run_network_pipeline, NetworkPipelineResult
 
+# Presentation vocabulary exports
+export Vocabulary, VOCAB, set_vocabulary!, reset_vocabulary!
+
 # HDP clustering exports
 export HDPBernoulliResult, HDPClusteringResult,
        fit_hdp_bernoulli_mixture,
@@ -71,6 +74,7 @@ export BernoulliMixtureResult, BernoulliMixtureModelSelection,
        plot_upset, plot_record_heatmap,
        plot_item_prevalence, plot_cooccurrence_heatmap
 
+include("vocabulary.jl")
 include("utils.jl")
 include("plot_utils.jl")
 include("data_preparation.jl")
@@ -152,7 +156,12 @@ Run the complete analysis pipeline:
 - `stratified` (if stratify_by_group): Output from `stratified_analysis`
 - `comparison` (if stratify_by_group): Output from `compare_strata`
 """
-function run_full_pipeline(data_path::String;
+function run_full_pipeline(data_path::String; verbose::Bool=true, kwargs...)
+    verbose && println("Loading data from $data_path...")
+    return run_full_pipeline(load_event_data(data_path); verbose, kwargs...)
+end
+
+function run_full_pipeline(event_df::DataFrame;
                            min_support::Float64=0.005,
                            min_confidence::Float64=0.1,
                            min_count::Union{Int, Nothing}=30,
@@ -165,8 +174,6 @@ function run_full_pipeline(data_path::String;
                            exclusive_items::Union{Nothing, AbstractDict}=nothing,
                            verbose::Bool=true)
     vprintln(args...) = verbose && println(args...)
-    vprintln("Loading data from $data_path...")
-    event_df = load_event_data(data_path)
     n_total = length(unique(event_df.id))
     vprintln("  $n_total records, $(nrow(event_df)) event rows")
 
@@ -243,7 +250,12 @@ Run the complete network analysis pipeline:
 - `stratified` (if stratify_by_group): Output from stratified_network_analysis
 - `comparison` (if stratify_by_group): NetworkComparisonResult
 """
-function run_network_pipeline(data_path::String;
+function run_network_pipeline(data_path::String; verbose::Bool=true, kwargs...)
+    verbose && println("Loading data from $data_path...")
+    return run_network_pipeline(load_event_data(data_path); verbose, kwargs...)
+end
+
+function run_network_pipeline(event_df::DataFrame;
                                weight_metric::Symbol=:lift,
                                min_count::Int=30,
                                alpha::Float64=0.05,
@@ -256,8 +268,6 @@ function run_network_pipeline(data_path::String;
                                exclusive_items::Union{Nothing, AbstractDict}=nothing,
                                verbose::Bool=true)
     vprintln(args...) = verbose && println(args...)
-    vprintln("Loading data from $data_path...")
-    event_df = load_event_data(data_path)
     n_total = length(unique(event_df.id))
     vprintln("  $n_total records, $(nrow(event_df)) event rows")
 
@@ -323,7 +333,12 @@ Set `prior=:empirical_bayes` for sparse data (Ye 2018-style per-feature priors).
 - `stratified` (if stratify_by_group): NamedTuple with group_a_result, group_b_result
 - `comparison` (if stratify_by_group): ClusteringComparisonResult
 """
-function run_clustering_pipeline(data_path::String;
+function run_clustering_pipeline(data_path::String; verbose::Bool=true, kwargs...)
+    verbose && println("Loading data from $data_path...")
+    return run_clustering_pipeline(load_event_data(data_path); verbose, kwargs...)
+end
+
+function run_clustering_pipeline(event_df::DataFrame;
                                   K_range::UnitRange{Int}=2:8,
                                   min_items::Int=2,
                                   prior::Symbol=:flat,
@@ -337,8 +352,6 @@ function run_clustering_pipeline(data_path::String;
                                   exclusive_items::Union{Nothing, AbstractDict}=nothing,
                                   verbose::Bool=true)
     vprintln(args...) = verbose && println(args...)
-    vprintln("Loading data from $data_path...")
-    event_df = load_event_data(data_path)
     n_total = length(unique(event_df.id))
     vprintln("  $n_total records, $(nrow(event_df)) event rows")
 

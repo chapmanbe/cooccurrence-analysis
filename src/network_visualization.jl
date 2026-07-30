@@ -6,7 +6,7 @@
     plot_cooccurrence_network(net::CooccurrenceNetwork;
                                communities::Union{CommunityResult, Nothing}=nothing,
                                layout::Symbol=:stress,
-                               title::String="Item Co-occurrence Network",
+                               title::String="$(VOCAB.item) Co-occurrence Network",
                                node_size_range=(15, 50),
                                edge_width_range=(0.5, 5.0),
                                figsize=(900, 700)) -> Figure
@@ -18,7 +18,7 @@ Node size ∝ prevalence, node color = community membership, edge width ∝ weig
 function plot_cooccurrence_network(net::CooccurrenceNetwork;
                                     communities::Union{CommunityResult, Nothing}=nothing,
                                     layout::Symbol=:stress,
-                                    title::String="Item Co-occurrence Network",
+                                    title::String="$(VOCAB.item) Co-occurrence Network",
                                     node_size_range=(15, 50),
                                     edge_width_range=(0.5, 5.0),
                                     figsize=(900, 700))
@@ -81,26 +81,31 @@ end
     plot_network_comparison(group_a_net::CooccurrenceNetwork,
                             group_b_net::CooccurrenceNetwork;
                             group_a_comm=nothing, group_b_comm=nothing,
+                            labels=("A", "B"),
                             layout::Symbol=:stress,
                             figsize=(1600, 700)) -> Figure
 
 Plot group_a and group_b co-occurrence networks side by side.
+
+`labels` names the two panels. Pass the actual group values so the figure reads
+in the caller's vocabulary rather than the placeholder "A"/"B".
 """
 function plot_network_comparison(group_a_net::CooccurrenceNetwork,
                                  group_b_net::CooccurrenceNetwork;
                                  group_a_comm::Union{CommunityResult, Nothing}=nothing,
                                  group_b_comm::Union{CommunityResult, Nothing}=nothing,
+                                 labels::Tuple{AbstractString, AbstractString}=("A", "B"),
                                  layout::Symbol=:stress,
                                  figsize=(1600, 700))
     fig = Figure(size=figsize)
 
-    for (col, net, comm, group) in [(1, group_a_net, group_a_comm, "A"),
-                                   (2, group_b_net, group_b_comm, "B")]
+    for (col, net, comm, group) in [(1, group_a_net, group_a_comm, labels[1]),
+                                   (2, group_b_net, group_b_comm, labels[2])]
         g = net.graph
         n = nv(g)
         n == 0 && continue
 
-        ax = Axis(fig[1, col]; title="$group Network ($(nv(g)) items, $(ne(g)) edges)",
+        ax = Axis(fig[1, col]; title="$group Network ($(nv(g)) $(VOCAB.items), $(ne(g)) edges)",
                   titlesize=16)
         hidedecorations!(ax)
         hidespines!(ax)
@@ -175,7 +180,7 @@ function plot_community_heatmap(net::CooccurrenceNetwork,
     ax = Axis(fig[1, 1];
         title="Co-occurrence Strength by Community",
         titlesize=16,
-        xlabel="Item", ylabel="Item",
+        xlabel="$(VOCAB.item)", ylabel="$(VOCAB.item)",
         xticks=(1:n, ordered_items),
         yticks=(1:n, ordered_items),
         xticklabelrotation=π/3,
@@ -254,16 +259,20 @@ end
     plot_group_stratified_network(comparison::NetworkComparisonResult,
                                  group_a_net::CooccurrenceNetwork,
                                  group_b_net::CooccurrenceNetwork;
+                                 labels=("Group A", "Group B"),
                                  layout=:stress,
                                  figsize=(1000, 800)) -> Figure
 
 Union graph of group_a and group_b networks with edges colored by group specificity:
 gray for shared, `wong_colors()[1]` for group_a-only, `wong_colors()[2]` for
 group_b-only. Node size is proportional to max prevalence across networks.
+
+`labels` names the two groups in the legend.
 """
 function plot_group_stratified_network(comparison::NetworkComparisonResult,
                                       group_a_net::CooccurrenceNetwork,
                                       group_b_net::CooccurrenceNetwork;
+                                      labels::Tuple{AbstractString, AbstractString}=("Group A", "Group B"),
                                       layout::Symbol=:stress,
                                       figsize::Tuple{Int,Int}=(1000, 800))
     # Build union item list
@@ -304,7 +313,7 @@ function plot_group_stratified_network(comparison::NetworkComparisonResult,
 
     fig = Figure(size=figsize)
     ax = Axis(fig[1, 1];
-        title="Group-Stratified Co-occurrence Network",
+        title="$(VOCAB.group)-Stratified Co-occurrence Network",
         titlesize=18)
     hidedecorations!(ax)
     hidespines!(ax)
@@ -348,7 +357,8 @@ function plot_group_stratified_network(comparison::NetworkComparisonResult,
     legend_entries = [LineElement(color=:gray60, linewidth=3),
                       LineElement(color=palette[1], linewidth=3),
                       LineElement(color=palette[2], linewidth=3)]
-    Legend(fig[1, 2], legend_entries, ["Shared", "Group A-only", "Group B-only"];
+    Legend(fig[1, 2], legend_entries,
+           ["Shared", "$(labels[1])-only", "$(labels[2])-only"];
            framevisible=false)
 
     return fig
@@ -358,21 +368,23 @@ end
     plot_centrality_comparison(group_a_metrics::DataFrame,
                                 group_b_metrics::DataFrame;
                                 centrality=:strength, top_n=15,
+                                labels=("A", "B"),
                                 figsize=(1200, 500)) -> Figure
 
 Side-by-side horizontal bar charts comparing centrality metrics for group_a and
-group_b networks.
+group_b networks. `labels` names the two panels.
 """
 function plot_centrality_comparison(group_a_metrics::DataFrame,
                                     group_b_metrics::DataFrame;
                                     centrality::Symbol=:strength,
                                     top_n::Int=15,
+                                    labels::Tuple{AbstractString, AbstractString}=("A", "B"),
                                     figsize::Tuple{Int,Int}=(1200, 500))
     palette = Makie.wong_colors()
     fig = Figure(size=figsize)
 
-    for (col, metrics, group, color) in [(1, group_a_metrics, "A", palette[1]),
-                                        (2, group_b_metrics, "B", palette[2])]
+    for (col, metrics, group, color) in [(1, group_a_metrics, labels[1], palette[1]),
+                                        (2, group_b_metrics, labels[2], palette[2])]
         nrow(metrics) == 0 && continue
         n = min(top_n, nrow(metrics))
         order = partialsortperm(Float64.(metrics[!, centrality]),
