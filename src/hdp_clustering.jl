@@ -405,14 +405,21 @@ function _run_hdp_cavi(X::AbstractMatrix{Bool},
     pi_mean = zeros(n_groups, K_max)
     _compute_pi_mean!(pi_mean, pi_a, pi_b)
 
-    # The documented global-stick approximation makes the ELBO non-monotone, so
-    # a single `|Δelbo| < tol` crossing can trigger on an oscillation rather than
-    # a plateau. Instead track the best ELBO seen and declare convergence only
-    # after PLATEAU_WINDOW consecutive iterations with no meaningful improvement.
+    # The documented global-stick approximation makes the ELBO non-monotone, so a
+    # single `|Δelbo| < tol` crossing can trigger on an oscillation rather than a
+    # plateau. Require PLATEAU_WINDOW *consecutive* small steps instead.
+    #
+    # The test is on the per-iteration delta, NOT on improvement over the best
+    # ELBO seen. Those are not interchangeable here: because the objective is
+    # non-monotone, iterations that keep refining the atoms without exceeding an
+    # early peak all look like "no improvement", and the window fills in a handful
+    # of iterations. On the 153,700-patient cohort that stopped CAVI at iteration
+    # 5 with every component still sitting on the marginal item prevalence —
+    # effective K of 3 undifferentiated clusters instead of 6 real ones. The
+    # 20-record test fixture is far too small to expose it.
     PLATEAU_WINDOW = 5
     prev_elbo = -Inf   # last computed ELBO (describes the returned iterate)
-    best_elbo = -Inf
-    no_improve = 0
+    small_steps = 0
     converged = false
     n_iter = max_iter
 
@@ -437,15 +444,15 @@ function _run_hdp_cavi(X::AbstractMatrix{Bool},
                                   beta_a, beta_b, beta_mean, pi_a, pi_b,
                                   alpha_prior, beta_prior, E_log_pi, alpha, gamma)
 
-        if elbo > best_elbo + tol * (1.0 + abs(best_elbo))
-            best_elbo = elbo
-            no_improve = 0
+        if isfinite(prev_elbo) &&
+           abs(elbo - prev_elbo) < tol * (1.0 + abs(prev_elbo))
+            small_steps += 1
         else
-            no_improve += 1
+            small_steps = 0
         end
         prev_elbo = elbo
 
-        if no_improve >= PLATEAU_WINDOW
+        if small_steps >= PLATEAU_WINDOW
             converged = true
             n_iter = iter
             break

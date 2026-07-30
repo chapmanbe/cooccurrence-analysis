@@ -1470,6 +1470,50 @@ end
             group_by=:NoSuchColumn)
     end
 
+    # ── Regression: CAVI must not stop before the atoms differentiate ──────────
+    #
+    # The convergence test is on the per-iteration ELBO delta. An earlier version
+    # tested improvement over the BEST ELBO seen, which — because the global-stick
+    # approximation makes the objective non-monotone — filled the plateau window
+    # in ~5 iterations and returned components all sitting on the marginal item
+    # prevalence. The other fixtures here are ~20 records, far too small to notice:
+    # the whole suite passed with the bug in place, while the 153,700-patient
+    # cohort collapsed from 6 real clusters to 3 undifferentiated ones.
+    #
+    # This fixture is big enough that |ELBO| is large (the faulty threshold scaled
+    # with it) and blocky enough that a correct fit must separate the blocks.
+    @testset "CAVI runs past the plateau window and separates blocks (C9 regression)" begin
+        rng = StableRNG(20260729)
+        BLOCKS = [["a1", "a2", "a3"], ["b1", "b2", "b3"], ["c1", "c2", "c3"]]
+        rows = NamedTuple[]
+        for pid in 1:1200
+            blk = BLOCKS[(pid % 3) + 1]
+            grp = pid <= 600 ? "A" : "B"
+            for it in blk
+                rand(rng) < 0.9 && push!(rows, (id=pid, item=it, Group=grp, year=2000))
+            end
+        end
+        blocky = DataFrame(rows)
+
+        res = hdp_clustering(blocky; group_by=:Group, K_max=8, n_init=1,
+                             max_iter=300, tol=1e-5, rng=StableRNG(7))
+        h = res.hdp_result
+
+        # Under the bug this returned at iteration 5-6.
+        @test h.n_iter > 10
+
+        # A correct fit puts each block's items at high θ in some cluster, so the
+        # active clusters must be distinguishable by their dominant item.
+        active = findall(>(0.01), h.beta_mean)
+        @test length(active) >= 3
+        dominant = unique([res.item_names[argmax(h.theta[k, :])] for k in active])
+        @test length(dominant) >= 3        # not all components on the same item
+
+        # Degenerate fits leave every θ near the marginal prevalence (~0.3 here);
+        # a separated fit drives at least one item per block well above that.
+        @test maximum(h.theta[active, :]) > 0.6
+    end
+
 end
 
 # ──────────────────────────────────────────────────────────────────────────────
