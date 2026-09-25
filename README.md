@@ -151,3 +151,7 @@ julia --project=. -e 'include("test/runtests.jl")'
 ## Dependencies
 
 Arrow, CSV, DataFrames, StatsBase, RuleMiner, HypothesisTests, MultipleTesting, Graphs, SimpleWeightedGraphs, CairoMakie, GraphMakie, NetworkLayout, SpecialFunctions, Distributions, Turing, MCMCChains, ReverseDiff.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
