@@ -1477,8 +1477,8 @@ end
     # approximation makes the objective non-monotone — filled the plateau window
     # in ~5 iterations and returned components all sitting on the marginal item
     # prevalence. The other fixtures here are ~20 records, far too small to notice:
-    # the whole suite passed with the bug in place, while the 153,700-patient
-    # cohort collapsed from 6 real clusters to 3 undifferentiated ones.
+    # the whole suite passed with the bug in place, while a 153,700-record
+    # dataset collapsed from 6 real clusters to 3 undifferentiated ones.
     #
     # This fixture is big enough that |ELBO| is large (the faulty threshold scaled
     # with it) and blocky enough that a correct fit must separate the blocks.

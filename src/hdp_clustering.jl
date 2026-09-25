@@ -413,7 +413,7 @@ function _run_hdp_cavi(X::AbstractMatrix{Bool},
     # ELBO seen. Those are not interchangeable here: because the objective is
     # non-monotone, iterations that keep refining the atoms without exceeding an
     # early peak all look like "no improvement", and the window fills in a handful
-    # of iterations. On the 153,700-patient cohort that stopped CAVI at iteration
+    # of iterations. On a 153,700-record dataset that stopped CAVI at iteration
     # 5 with every component still sitting on the marginal item prevalence —
     # effective K of 3 undifferentiated clusters instead of 6 real ones. The
     # 20-record test fixture is far too small to expose it.
